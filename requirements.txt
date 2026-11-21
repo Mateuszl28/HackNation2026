@@ -7,5 +7,7 @@ imagehash>=4.3
 numpy>=2.0
 networkx>=3.3                 # podgrupy Louvain i mosty w kampaniach
 opencv-python-headless>=4.10  # twarze: YuNet (MIT) + SFace (Apache 2.0); modele: python tools/get_models.py
-rapidocr-onnxruntime==1.4.4   # OCR zrzutów (Apache 2.0), działa bez instalowania programów
+# OCR zrzutów (Apache 2.0), działa bez instalowania programów; 1.4.x wspiera tylko Pythona < 3.13
+rapidocr-onnxruntime==1.4.4; python_version < "3.13"
+rapidocr-onnxruntime==1.2.3; python_version >= "3.13"
 # opcjonalnie lepszy OCR dla polskiego: Tesseract (Apache 2.0) z językiem "pol" + pip install pytesseract
