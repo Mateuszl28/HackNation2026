@@ -46,10 +46,22 @@
   .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:middle; }
   img.shot { max-width:100%; max-height:260px; border-radius:8px; border:1px solid var(--line); }
   code { word-break:break-all; }
+  a { color:#8fb6ff; } a:visited { color:#b9a3ff; }
   #installBtn { margin:0 0 0 auto; padding:6px 12px; }
   .banner { background:#1d2a3d; border:1px solid #2f4a6e; color:#cfe2ff; border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:14px; }
   .banner.warn { background:#3d2a14; border-color:#6e4a2f; color:#ffe0b3; }
   #preview { display:block; margin-top:8px; } #preview[hidden], .banner[hidden] { display:none; }
+  .filebtns { display:flex; gap:8px; align-items:center; flex-wrap:wrap; } .filebtns .btn { margin-top:0; }
+  #alertBar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; width:100%; background:#3a1512; border:1px solid #7a2a22;
+    color:#ffd9d4; border-radius:10px; padding:8px 12px; font-size:14px; }
+  #alertBar[hidden] { display:none; }
+  #alertBar .btn { margin:0; padding:4px 10px; font-size:13px; }
+  #alertBar .grow { flex:1 1 200px; }
+  #alertBar.pulse { animation: pulse 1.2s ease-out 2; }
+  @keyframes pulse { 0% { box-shadow:0 0 0 0 rgba(211,58,44,.8); } 100% { box-shadow:0 0 0 14px rgba(211,58,44,0); } }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; } .toolbar .btn { margin-top:0; }
+  .live { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--ok); margin-right:6px; animation: blink 2s infinite; }
+  @keyframes blink { 50% { opacity:.25; } }
   @media (max-width: 600px) { header h1 { font-size:16px; } nav button { padding:5px 7px; font-size:14px; } main { padding:12px; } }
 </style>
 </head>
@@ -65,6 +77,13 @@
     <button data-tab="alerts">Alerty<span id="badge" hidden>0</span></button>
   </nav>
   <button class="btn" id="installBtn" hidden>📲 Zainstaluj</button>
+  <div id="alertBar" role="alert" hidden>
+    <span>🔔</span>
+    <span class="grow"><b id="alertBarMsg"></b> <span id="alertBarSub" class="small"></span></span>
+    <button class="btn" id="alertBarOpen">Zobacz</button>
+    <button class="btn ghost" id="alertBarAll">Wszystkie (<span id="alertBarCount">0</span>)</button>
+    <button class="btn ghost" id="alertBarClose" aria-label="Zamknij">✕</button>
+  </div>
 </header>
 <main>
   <div id="offlineBanner" class="banner warn" hidden>Brak połączenia z serwerem – pokazuję zapisaną wersję aplikacji.</div>
@@ -78,7 +97,14 @@
         <label>Tekst reklamy, nazwa produktu lub hasło</label>
         <textarea name="text" placeholder="np. „Lekarze są w szoku! Naturalny sposób na stawy w 7 dni”"></textarea>
         <label>Zrzut ekranu / zdjęcie reklamy</label>
-        <input name="file" type="file" accept="image/*">
+        <input name="file" id="fileInput" type="file" accept="image/*" hidden>
+        <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden>
+        <div class="filebtns">
+          <button type="button" class="btn ghost" id="camBtn">📷 Zrób zdjęcie</button>
+          <button type="button" class="btn ghost" id="pickBtn">🖼️ Wybierz zrzut / plik</button>
+          <button type="button" class="btn ghost" id="clearFileBtn" hidden>✕</button>
+          <span id="fileName" class="small muted">nie wybrano pliku</span>
+        </div>
         <img id="preview" class="shot" hidden alt="podgląd zrzutu">
         <button class="btn" type="submit">Analizuj</button>
         <p class="muted small" id="installTip">Na telefonie zainstaluj aplikację, a potem udostępniaj reklamy prosto z Facebooka/przeglądarki: <b>Udostępnij → FejkRadar</b>.</p>
@@ -88,14 +114,25 @@
     <div class="card"><b>Ostatnie zgłoszenia</b><table id="recent"></table></div>
   </section>
 
-  <section id="campaigns"><div id="clusterList"></div></section>
+  <section id="campaigns">
+    <div class="card">
+      <div class="toolbar">
+        <button class="btn" id="injectCamp">🧪 Wstrzyknij nowy wariant</button>
+        <button class="btn ghost" id="scanCamp">Skanuj teraz</button>
+        <span id="injectCampMsg" class="small muted">Dopisuje do biblioteki reklam kolejny wariant znanej kampanii – scheduler wyłapie go w ciągu 30 s.</span>
+      </div>
+    </div>
+    <div id="clusterList"></div>
+  </section>
 
   <section id="graph">
     <div class="card legend">
       <span><i class="dot" style="background:#d33a2c"></i>reklama (kolor = kampania)</span>
-      <span><i class="dot" style="background:#4c8bf5"></i>domena</span>
-      <span><i class="dot" style="background:#b36ae2"></i>osoba</span>
-      <span class="muted">grubość krawędzi = siła podobieństwa; kliknij krawędź lub węzeł</span>
+      <span><i class="dot" style="background:#4c8bf5;border-radius:2px"></i>domena docelowa</span>
+      <span><i class="dot" style="background:#7d8799;border-radius:2px"></i>domena z przekierowań</span>
+      <span><i class="dot" style="background:#b36ae2;transform:rotate(45deg);border-radius:1px"></i>osoba</span>
+      <span>━ <span style="color:#d33a2c">podobieństwo</span></span> <span>┅ przekierowanie</span>
+      <br><span class="muted">grubość czerwonej krawędzi = siła połączenia; kliknij krawędź, by zobaczyć powody, a reklamę – by otworzyć raport</span>
       <select id="graphFilter" style="margin-top:8px"></select>
     </div>
     <div id="cy"></div>
@@ -133,7 +170,7 @@
         <div id="injectMsg" class="small muted"></div>
       </div>
     </div>
-    <div class="card"><b>Źródła</b><table id="sourceTable"></table></div>
+    <div class="card"><b><span class="live"></span>Źródła</b> <span class="small muted">– status odświeżany na żywo, skan co 30 s</span><table id="sourceTable"></table></div>
     <div class="card"><b>Dziennik skanów</b><table id="logTable"></table></div>
   </section>
 
@@ -222,25 +259,50 @@ async function loadClusters() {
       <b><span class="dot" style="background:${clusterColor(c.cluster_id)}"></span>Kampania #${c.cluster_id}: ${esc(c.name)} – ${c.ads.length} mat. ${c.watched ? "🔔" : ""}</b>
       ${riskTag(c.max_risk)}
     </div>
-    <button class="btn ghost" style="margin:4px 0" onclick="toggleWatch(${c.cluster_id}, ${c.watched})">${c.watched ? "Przestań obserwować" : "🔔 Obserwuj"}</button>
+    <div class="toolbar" style="margin:6px 0">
+      <button class="btn ${c.watched ? "ghost" : ""}" onclick="toggleWatch(${c.cluster_id}, ${c.watched})">${c.watched ? "✓ Obserwujesz (kliknij, by przestać)" : "🔔 Obserwuj"}</button>
+      <button class="btn ghost" onclick="graphFor(${c.cluster_id})">🕸️ Pokaż w grafie</button>
+    </div>
     <div class="small"><b>Domeny:</b> ${c.domains.map(esc).join(", ") || "—"}</div>
     <div>${c.keywords.map(k => `<span class="tag">${esc(k)}</span>`).join("")}</div>
     <div class="small">Materiały: ${c.ads.map(id => `<a href="#ad/${id}">#${id}</a>`).join(" ")}</div>
   </div>`).join("") || `<div class="card muted">Brak danych – scheduler zaraz zeskanuje bibliotekę.</div>`;
 }
+let graphCampaign = "";
+function graphFor(cid) { graphCampaign = String(cid); show("graph"); }
+
+// wspólne dla zakładek Kampanie i Scheduler
+async function injectVariant(msgEl) {
+  try {
+    const r = await api("/api/demo/inject", {method: "POST"});
+    msgEl.textContent = r.ok
+      ? `✓ Dodano ${r.injected} do biblioteki reklam (zostało ${r.remaining}). Scheduler wyłapie go w ciągu 30 s – albo kliknij „Skanuj teraz”.`
+      : r.message;
+  } catch (e) { msgEl.textContent = "Błąd: " + e.message; }
+}
+async function scanAll(msgEl) {
+  const {sources} = await api("/api/scheduler");
+  const res = await Promise.all(sources.filter(s => s.enabled).map(s => api(`/api/sources/${s.id}/run`, {method: "POST"})));
+  const n = res.reduce((k, r) => k + r.new, 0);
+  if (msgEl) msgEl.textContent = `Skan zakończony: ${n} nowych pozycji.`;
+  pollAlerts(); refreshActive();
+}
+$("#injectCamp").addEventListener("click", () => injectVariant($("#injectCampMsg")));
+$("#scanCamp").addEventListener("click", () => scanAll($("#injectCampMsg")));
 
 // ---------- graf ----------
 let cy;
 async function loadGraph() {
-  const sel = $("#graphFilter"), chosen = sel.value;
+  const sel = $("#graphFilter");
   const cs = await api("/api/campaigns");
   sel.innerHTML = `<option value="">Wszystkie kampanie</option>` +
     cs.map(c => `<option value="${c.id}">#${c.id} ${esc(c.name)} (${c.size})</option>`).join("");
-  sel.value = chosen;
+  sel.value = cs.some(c => String(c.id) === graphCampaign) ? graphCampaign : "";
+  const chosen = sel.value;
   const g = await api("/api/graph" + (chosen ? `?campaign=${chosen}` : ""));
-  // API zwraca gotowe elementy Cytoscape.js – dokładamy tylko kolor kampanii
+  // API zwraca gotowe elementy Cytoscape.js – dokładamy tylko kolory
   g.elements.nodes.forEach(n => { n.data.color = n.data.type === "ad" ? clusterColor(n.data.campaign)
-    : n.data.type === "domain" ? "#4c8bf5" : "#b36ae2"; });
+    : n.data.type === "person" ? "#b36ae2" : n.data.domain_role === "pośrednia" ? "#7d8799" : "#4c8bf5"; });
   cy?.destroy();
   cy = cytoscape({
     container: $("#cy"), elements: g.elements,
@@ -248,22 +310,33 @@ async function loadGraph() {
       {selector: "node", style: {"background-color": "data(color)", label: "data(label)", color: "#cfd5e0", "font-size": 9,
         "text-wrap": "ellipsis", "text-max-width": 120, width: "mapData(degree, 1, 10, 16, 34)", height: "mapData(degree, 1, 10, 16, 34)"}},
       {selector: "node.domain", style: {shape: "round-rectangle"}},
+      {selector: "node.hop", style: {"border-width": 2, "border-style": "dashed", "border-color": "#cfd5e0"}},
       {selector: "node.person", style: {shape: "diamond"}},
       {selector: "edge", style: {width: 1, "line-color": "#3a4150", "curve-style": "bezier"}},
-      {selector: "edge.podobieństwo", style: {"line-color": "#d33a2c", opacity: .75, width: "mapData(score, 0.6, 2, 1.5, 6)"}},
-      {selector: "edge.przekierowanie", style: {"line-style": "dashed"}},
+      {selector: "edge.similar", style: {"line-color": "#d33a2c", opacity: .75, width: "mapData(score, 0.6, 2, 1.5, 6)"}},
+      {selector: "edge.redirect", style: {"line-style": "dashed"}},
+      {selector: "edge.person-link", style: {"line-color": "#6b4a85"}},
       {selector: ":selected", style: {"border-width": 3, "border-color": "#fff", "line-color": "#fff"}},
     ],
-    layout: {name: "cose", animate: false, nodeRepulsion: 9000, idealEdgeLength: 70},
+    layout: {name: "cose", animate: false, nodeRepulsion: 9000, idealEdgeLength: 70, padding: 30},
+    minZoom: 0.2, maxZoom: 2.2, wheelSensitivity: 0.3,
   });
+  requestAnimationFrame(() => { cy.resize(); cy.fit(undefined, 30); });
   $("#edgeInfo").textContent = `${g.meta.ads} reklam, ${g.meta.campaigns} kampanii · próg połączenia > ${g.meta.threshold}`;
+  const label = (id) => cy.getElementById(id).data("label");
   cy.on("tap", "edge", e => { const d = e.target.data();
-    $("#edgeInfo").innerHTML = `<b>${esc(d.type)}</b>${d.score ? ` – wynik ${d.score.toFixed(2)}` : ""}<br>${esc((d.reasons || []).join("; "))}`; });
+    if (d.type === "podobieństwo") {
+      $("#edgeInfo").innerHTML = `<b>Połączenie ${esc(label(d.source))} ↔ ${esc(label(d.target))}</b> – wynik <b>${d.score.toFixed(2)}</b> (próg > ${g.meta.threshold})
+        <ul class="reasons">${d.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul>`;
+    } else {
+      $("#edgeInfo").innerHTML = `<b>${esc(d.type)}</b>: ${esc(label(d.source))} → ${esc(label(d.target))}`;
+    } });
   cy.on("tap", "node", e => { const d = e.target.data();
     if (d.type === "ad") openAd(d.ad_id);
-    else $("#edgeInfo").textContent = `${d.type === "person" ? "osoba" : "domena"}: ${d.label}${d.role ? ` (${d.role})` : ""} – powiązań: ${d.degree}`; });
+    else if (d.type === "person") $("#edgeInfo").innerHTML = `<b>Osoba:</b> ${esc(d.label)}${d.role ? ` (${esc(d.role)})` : ""} – w ${d.degree} reklamach`;
+    else $("#edgeInfo").innerHTML = `<b>Domena ${esc(d.domain_role)}:</b> ${esc(d.label)} – powiązań: ${d.degree}`; });
 }
-$("#graphFilter").addEventListener("change", loadGraph);
+$("#graphFilter").addEventListener("change", () => { graphCampaign = $("#graphFilter").value; loadGraph(); });
 
 // ---------- osoby ----------
 async function loadPersons() {
@@ -283,7 +356,7 @@ $("#personForm").addEventListener("submit", async e => {
 const fmt = (t) => t ? new Date(t * 1000).toLocaleTimeString("pl-PL") : "—";
 async function loadSources() {
   const {sources, log} = await api("/api/scheduler");
-  $("#sourceTable").innerHTML = `<tr><th>#</th><th>Cel</th><th>Co</th><th>Ostatnio</th><th>Następny</th><th>Status</th><th></th></tr>` + sources.map(s =>
+  $("#sourceTable").innerHTML = `<tr><th>#</th><th>Cel</th><th>Interwał</th><th>Ostatnio</th><th>Następny</th><th>Status</th><th></th></tr>` + sources.map(s =>
     `<tr><td>${s.id}</td><td><code>${esc(s.target)}</code></td><td>${s.interval_s}s</td><td>${fmt(s.last_run)}</td>
      <td>${s.next_run_in_s == null ? "wył." : `za ${s.next_run_in_s}s`}</td><td>${esc(s.last_status)}</td>
      <td><button class="btn ghost" style="margin:0" onclick="runSource(${s.id})">skanuj</button>
@@ -297,15 +370,22 @@ $("#sourceForm").addEventListener("submit", async e => {
   e.preventDefault(); const f = new FormData(e.target);
   await api("/api/sources", json({target: f.get("target"), interval_s: +f.get("interval_s")})); e.target.reset(); loadSources();
 });
-$("#inject").addEventListener("click", async () => {
-  const r = await api("/api/demo/inject", {method: "POST"});
-  $("#injectMsg").textContent = r.ok ? `Dodano ${r.injected} do biblioteki (zostało ${r.remaining}). Scheduler wyłapie go w ciągu 30 s – albo kliknij „skanuj”.` : r.message;
-});
+$("#inject").addEventListener("click", () => injectVariant($("#injectMsg")));
 $("#reset").addEventListener("click", async () => {
   const r = await api("/api/demo/reset", {method: "POST"});
-  notified.clear();
-  $("#injectMsg").textContent = `Zresetowano – zasiano ${r.seeded} reklam demo.`; loadSources();
+  notified.clear(); dismissedAlert = 0;
+  $("#injectMsg").textContent = `Zresetowano – zasiano ${r.seeded} reklam demo.`; loadSources(); pollAlerts();
 });
+
+// odświeżanie na żywo aktywnej zakładki (scheduler: odliczanie do skanu, nowe pozycje w dzienniku)
+function activeTab() { return document.querySelector("section.active")?.id; }
+function refreshActive() {
+  const t = activeTab();
+  if (t === "scheduler") loadSources();
+  else if (t === "campaigns") loadClusters();
+  else if (t === "alerts") loadAlerts();
+}
+setInterval(() => { if (activeTab() === "scheduler" && !document.hidden) loadSources().catch(() => {}); }, 2000);
 
 // ---------- alerty / powiadomienia ----------
 async function loadAlerts() {
@@ -318,10 +398,31 @@ $("#seenBtn").addEventListener("click", async () => { await api("/api/alerts/see
 function askNotif() { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission(); }
 $("#notifBtn").addEventListener("click", askNotif);
 const notified = new Set();
+let dismissedAlert = 0, barAlert = null;
+
+// ---------- pasek alertów w aplikacji ----------
+function renderAlertBar(al) {
+  const newest = al[0];
+  const bar = $("#alertBar");
+  if (!newest || newest.id <= dismissedAlert) { bar.hidden = true; barAlert = null; return; }
+  const fresh = !barAlert || barAlert.id !== newest.id;
+  barAlert = newest;
+  $("#alertBarMsg").textContent = newest.message;
+  $("#alertBarSub").textContent = [newest.campaign_name, newest.ad_domain].filter(Boolean).join(" · ");
+  $("#alertBarCount").textContent = al.length;
+  bar.hidden = false;
+  if (fresh) { bar.classList.remove("pulse"); void bar.offsetWidth; bar.classList.add("pulse"); }
+}
+$("#alertBarOpen").addEventListener("click", () => { if (barAlert) location.hash = `ad/${barAlert.ad_id}`; });
+$("#alertBarAll").addEventListener("click", () => { location.hash = "alerts"; show("alerts"); });
+$("#alertBarClose").addEventListener("click", () => { dismissedAlert = barAlert?.id || 0; $("#alertBar").hidden = true; });
+
 async function pollAlerts() {
   try {
     const al = await api("/api/alerts?unseen=true");
     $("#badge").hidden = !al.length; $("#badge").textContent = al.length;
+    renderAlertBar(al);
+    if (al.some(a => !notified.has(a.id))) refreshActive();
     for (const a of al) {
       if (notified.has(a.id)) continue; notified.add(a.id);
       if ("Notification" in window && Notification.permission === "granted") {
@@ -337,16 +438,30 @@ async function pollAlerts() {
     }
   } catch {}
 }
-setInterval(pollAlerts, 8000);
+setInterval(pollAlerts, 5000);
+// alerty sprzed otwarcia aplikacji: bez powiadomień systemowych, ale widoczne na pasku
 api("/api/alerts?unseen=true").then(al => al.forEach(a => notified.add(a.id))).finally(pollAlerts);
 
 // ---------- PWA: podgląd zrzutu ----------
 function showPreview(file) {
   const img = $("#preview");
+  $("#fileName").textContent = file ? `${file.name} (${Math.round(file.size / 1024)} kB)` : "nie wybrano pliku";
+  $("#clearFileBtn").hidden = !file;
   if (!file) { img.hidden = true; img.removeAttribute("src"); return; }
   img.src = URL.createObjectURL(file); img.hidden = false;
 }
-$("#form").file.addEventListener("change", e => showPreview(e.target.files[0]));
+// dwa źródła obrazu: aparat telefonu (capture="environment") albo plik/zrzut z galerii – oba trafiają do pola "file"
+function setFile(file) {
+  const dt = new DataTransfer();
+  if (file) dt.items.add(file);
+  $("#fileInput").files = dt.files;
+  showPreview(file);
+}
+$("#camBtn").addEventListener("click", () => $("#cameraInput").click());
+$("#pickBtn").addEventListener("click", () => $("#fileInput").click());
+$("#clearFileBtn").addEventListener("click", () => setFile(null));
+$("#cameraInput").addEventListener("change", e => { setFile(e.target.files[0]); e.target.value = ""; });
+$("#fileInput").addEventListener("change", e => showPreview(e.target.files[0]));
 $("#form").addEventListener("reset", () => { showPreview(null); $("#shareBanner").hidden = true; });
 
 // ---------- PWA: Android Share Target („Udostępnij → FejkRadar”) ----------
@@ -380,7 +495,7 @@ async function receiveShare() {
     await cache.delete(fi.key);
   }
   await cache.delete("/__share/meta");
-  if (dt.files.length) { f.file.files = dt.files; showPreview(dt.files[0]); }
+  if (dt.files.length) setFile(dt.files[0]);
   const what = [url && "link", f.text.value && "tekst", dt.files.length && "obraz"].filter(Boolean).join(", ");
   banner.textContent = `📥 Odebrano udostępnioną treść (${what || "pusta"}) – analizuję…`; banner.hidden = false;
   if (what) f.requestSubmit();

@@ -30,6 +30,17 @@ Otwórz http://localhost:8000. Przy starcie baza zasiewa się 7 fikcyjnymi rekla
 
 Opcjonalnie OCR zrzutów ekranu: zainstaluj [Tesseract](https://github.com/tesseract-ocr/tesseract) z językiem `pol` oraz `pip install pytesseract`. Bez niego analiza zrzutów korzysta z tekstu wpisanego ręcznie i hasha wizualnego.
 
+### Interfejs (`web/index.html` – jeden plik, bez kroku budowania)
+
+| Zakładka | Co zawiera |
+|---|---|
+| **Złap fejk** | link, tekst/hasło, zrzut: **📷 Zrób zdjęcie** (aparat telefonu, `capture="environment"`) albo **🖼️ Wybierz zrzut/plik** z galerii; odbiór treści z Android Share Target; natychmiastowy raport: ryzyko i powody, dopasowanie do kampanii, przekierowania, domena i jej wiek, tytuł strony, osoby, podobne materiały z powodami |
+| **Kampanie** | lista kampanii (domeny, motywy, maks. ryzyko), **Obserwuj**, **Pokaż w grafie**, **🧪 Wstrzyknij nowy wariant**, **Skanuj teraz** |
+| **Graf** | Cytoscape.js: reklamy w kolorze kampanii, domeny docelowe (niebieskie), domeny z przekierowań (szare, przerywane), osoby (fioletowe romby); kliknięcie krawędzi pokazuje wynik i powody połączenia, kliknięcie reklamy otwiera raport; filtr kampanii |
+| **Baza osób** | dodawanie i usuwanie osób z rolą i aliasami, liczba reklam z daną osobą |
+| **Scheduler** | status odświeżany na żywo (odliczanie do skanu co 30 s), dodawanie źródeł JSON, włącz/wyłącz, skan od ręki, dziennik skanów, reset demo |
+| **Alerty** | lista alertów; dodatkowo **pasek alertu** pod nagłówkiem na każdej zakładce (Zobacz / Wszystkie / ✕) i **powiadomienia systemowe** (Notification przez service worker) |
+
 ### Aplikacja mobilna (PWA) – `web/manifest.webmanifest`, `web/sw.js`
 
 Na telefonie PWA wymaga HTTPS (wyjątek: `localhost`). Najprościej tunel: `cloudflared tunnel --url http://localhost:8000`, potem adres w Chrome na Androidzie.

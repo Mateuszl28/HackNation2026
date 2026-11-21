@@ -116,11 +116,16 @@ def campaigns():
 app.add_api_route("/api/clusters", campaigns, methods=["GET"], include_in_schema=False)  # zgodność wsteczna
 
 
+# klasy CSS krawędzi w Cytoscape.js muszą być ASCII (selektor nie obsługuje polskich znaków)
+EDGE_CLASSES = {"domena": "target-link", "przekierowanie": "redirect", "wizerunek": "person-link",
+                "podobieństwo": "similar"}
+
+
 @app.get("/api/graph")
 def graph(campaign: int | None = None, min_size: int = Query(1, ge=1)):
     """Graf powiązań w formacie Cytoscape.js: {elements: {nodes: [{data}], edges: [{data}]}}.
 
-    Węzły: reklamy (ad), domeny docelowe i pośrednie (domain), osoby (person).
+    Węzły: reklamy (ad), domeny (domain; data.domain_role = docelowa | pośrednia | docelowa+pośrednia), osoby (person).
     Krawędzie: reklama–domena (domena / przekierowanie), reklama–osoba (wizerunek),
                reklama–reklama (podobieństwo, z wynikiem i powodami).
     """
@@ -133,13 +138,14 @@ def graph(campaign: int | None = None, min_size: int = Query(1, ge=1)):
     persons = {p["id"]: p for p in pipeline.all_persons(conn)}
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
+    domain_roles: dict[str, set[str]] = {}  # domena docelowa / pośrednia (w łańcuchu przekierowań) / obie
 
     def node(nid: str, **data):
         nodes.setdefault(nid, {"data": {"id": nid, **data}, "classes": data["type"]})
 
     def edge(src: str, dst: str, etype: str, **data):
         edges.append({"data": {"id": f"{etype}:{src}->{dst}", "source": src, "target": dst, "type": etype, **data},
-                      "classes": etype})
+                      "classes": EDGE_CLASSES[etype]})
 
     for a in ads:
         aid = f"ad{a['id']}"
@@ -147,10 +153,12 @@ def graph(campaign: int | None = None, min_size: int = Query(1, ge=1)):
              campaign=a["cluster_id"], campaign_name=names.get(a["cluster_id"]), risk=a["risk"], domain=a["domain"])
         if a["domain"]:
             node(f"d:{a['domain']}", type="domain", label=a["domain"])
+            domain_roles.setdefault(f"d:{a['domain']}", set()).add("docelowa")
             edge(aid, f"d:{a['domain']}", "domena")
         for hop in sorted({registrable_domain(u) for u in a["redirect_chain"][:-1]} - {None, a["domain"]}):
             if hop not in PLATFORM_DOMAINS:
                 node(f"d:{hop}", type="domain", label=hop)
+                domain_roles.setdefault(f"d:{hop}", set()).add("pośrednia")
                 edge(aid, f"d:{hop}", "przekierowanie")
         for pid in a["persons"]:
             if pid in persons:
@@ -159,6 +167,9 @@ def graph(campaign: int | None = None, min_size: int = Query(1, ge=1)):
     for e in map(row_to_dict, conn.execute("SELECT * FROM similarity_edges")):
         if e["ad_a"] in ad_ids and e["ad_b"] in ad_ids:
             edge(f"ad{e['ad_a']}", f"ad{e['ad_b']}", "podobieństwo", score=e["score"], reasons=e["reasons"])
+    for nid, roles in domain_roles.items():
+        nodes[nid]["data"]["domain_role"] = "docelowa" if roles == {"docelowa"} else             "pośrednia" if roles == {"pośrednia"} else "docelowa+pośrednia"
+        nodes[nid]["classes"] = "domain " + ("hop" if roles == {"pośrednia"} else "target")
     for n in nodes.values():  # stopień węzła – przydatny do rozmiaru w UI
         n["data"]["degree"] = sum(n["data"]["id"] in (e["data"]["source"], e["data"]["target"]) for e in edges)
     return {"elements": {"nodes": list(nodes.values()), "edges": edges},

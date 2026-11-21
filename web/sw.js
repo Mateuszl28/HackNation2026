@@ -4,7 +4,7 @@
  *     do Cache Storage i otwiera zakładkę „Złap fejk”, która wypełnia formularz i uruchamia analizę.
  *  3. Powiadomienia: kliknięcie przełącza otwarte okno aplikacji na alert (albo otwiera nowe).
  */
-const VERSION = "fejkradar-v5";
+const VERSION = "fejkradar-v6";
 const SHELL_CACHE = `${VERSION}-shell`;
 const SHARE_CACHE = "fejkradar-share";
 const SHELL = [
