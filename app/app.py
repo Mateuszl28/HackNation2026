@@ -20,9 +20,9 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from . import pipeline, scheduler
+from . import pipeline, scheduler, vision
 from .analyzer import PLATFORM_DOMAINS, registrable_domain
-from .clustering import THRESHOLD
+from .clustering import THRESHOLD, tracker_label
 from .db import DATA_DIR, DEMO_VARIANTS, FEED_PATH, connect, init_db, load_json, now, reset_demo, row_to_dict
 
 WEB = Path(__file__).resolve().parent.parent / "web"  # frontend + PWA
@@ -34,8 +34,11 @@ async def lifespan(_: FastAPI):
     init_db()
     await pipeline.seed_ads()
     task = asyncio.create_task(scheduler.loop())
+    # rozgrzanie silników OCR i twarzy w tle (pierwsze zgłoszenie nie czeka na ładowanie modeli)
+    warmup = asyncio.create_task(asyncio.to_thread(lambda: (vision.ocr_backend(), vision.faces_available())))
     yield
     task.cancel()
+    warmup.cancel()
 
 
 app = FastAPI(title="FejkRadar", description="Wykrywanie i łączenie w kampanie fałszywych reklam", lifespan=lifespan)
@@ -46,6 +49,12 @@ def _get_or_404(sql: str, params: tuple, what: str) -> dict:
     if not row:
         raise HTTPException(404, f"Nie znaleziono: {what}")
     return row
+
+
+@app.get("/api/capabilities")
+def capabilities():
+    """Które silniki analizy obrazu są dostępne (OCR, twarze)."""
+    return vision.status()
 
 
 @app.get("/api/health")
@@ -86,7 +95,10 @@ async def share_target(title: str = Form(None), text: str = Form(None), url: str
 
 @app.get("/api/ads")
 def list_ads(limit: int = Query(200, ge=1, le=1000)):
-    return pipeline.all_ads()[::-1][:limit]
+    ads = pipeline.all_ads()[::-1][:limit]
+    for a in ads:  # wektory twarzy zostają na serwerze
+        a["faces"] = [{k: v for k, v in f.items() if k != "embedding"} for f in a["faces"] or []]
+    return ads
 
 
 @app.get("/api/ads/{ad_id}")
@@ -118,14 +130,16 @@ app.add_api_route("/api/clusters", campaigns, methods=["GET"], include_in_schema
 
 # klasy CSS krawędzi w Cytoscape.js muszą być ASCII (selektor nie obsługuje polskich znaków)
 EDGE_CLASSES = {"domena": "target-link", "przekierowanie": "redirect", "wizerunek": "person-link",
-                "podobieństwo": "similar"}
+                "podobieństwo": "similar", "śledzenie": "tracker-link", "hosting": "hosting-link",
+                "certyfikat": "cert-link"}
 
 
 @app.get("/api/graph")
 def graph(campaign: int | None = None, min_size: int = Query(1, ge=1)):
     """Graf powiązań w formacie Cytoscape.js: {elements: {nodes: [{data}], edges: [{data}]}}.
 
-    Węzły: reklamy (ad), domeny (domain; data.domain_role = docelowa | pośrednia | docelowa+pośrednia), osoby (person).
+    Węzły: reklamy (ad), domeny (domain; data.domain_role = docelowa | pośrednia | docelowa+pośrednia), osoby (person),
+           identyfikatory śledzące (tracker), sieci hostingowe/ASN (network), wspólne certyfikaty SSL (cert).
     Krawędzie: reklama–domena (domena / przekierowanie), reklama–osoba (wizerunek),
                reklama–reklama (podobieństwo, z wynikiem i powodami).
     """
@@ -139,6 +153,10 @@ def graph(campaign: int | None = None, min_size: int = Query(1, ge=1)):
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
     domain_roles: dict[str, set[str]] = {}  # domena docelowa / pośrednia (w łańcuchu przekierowań) / obie
+    certs: dict[str, dict[str, str]] = {}   # odcisk SSL -> {reklama: domena}; węzeł tylko gdy różne domeny
+    bridges_all = [json.loads(r[0]) for r in conn.execute("SELECT bridges FROM campaigns") if r[0]]
+    bridge_pairs = {(e["a"], e["b"]) for b in bridges_all for e in b.get("edges", [])}
+    bridge_ads = {x["ad"] for b in bridges_all for x in b.get("ads", [])}
 
     def node(nid: str, **data):
         nodes.setdefault(nid, {"data": {"id": nid, **data}, "classes": data["type"]})
@@ -162,11 +180,35 @@ def graph(campaign: int | None = None, min_size: int = Query(1, ge=1)):
                 edge(aid, f"d:{hop}", "przekierowanie")
         for pid in a["persons"]:
             if pid in persons:
+                via = "twarz" if any(f.get("person_id") == pid for f in a["faces"] or []) else "tekst"
                 node(f"p{pid}", type="person", label=persons[pid]["name"], role=persons[pid]["role"])
-                edge(aid, f"p{pid}", "wizerunek")
+                edge(aid, f"p{pid}", "wizerunek", via=via)
+        infra = a["infra"] or {}
+        for t in infra.get("trackers") or []:  # wspólne ID pikseli/analityki = to samo konto reklamowe
+            node(f"t:{t}", type="tracker", label=tracker_label(t))
+            edge(aid, f"t:{t}", "śledzenie")
+        if infra.get("asn") or infra.get("net_name"):  # sieć hostingowa (ASN) serwera strony docelowej
+            nid = f"n:{infra.get('asn') or infra.get('net_name')}"
+            node(nid, type="network", label=" ".join(filter(None, [infra.get("net_name"), infra.get("asn")])))
+            edge(aid, nid, "hosting", ip=infra.get("ip"))
+        if infra.get("cert_sha256"):
+            certs.setdefault(infra["cert_sha256"], {})[aid] = a["domain"]
+    for sha, members in certs.items():
+        if len(set(members.values())) > 1:
+            node(f"c:{sha}", type="cert", label=f"SSL {sha[:10]}…")
+            for aid in members:
+                edge(aid, f"c:{sha}", "certyfikat")
     for e in map(row_to_dict, conn.execute("SELECT * FROM similarity_edges")):
         if e["ad_a"] in ad_ids and e["ad_b"] in ad_ids:
-            edge(f"ad{e['ad_a']}", f"ad{e['ad_b']}", "podobieństwo", score=e["score"], reasons=e["reasons"])
+            edge(f"ad{e['ad_a']}", f"ad{e['ad_b']}", "podobieństwo", score=e["score"], reasons=e["reasons"],
+                 bridge=(e["ad_a"], e["ad_b"]) in bridge_pairs)
+    for e in edges:
+        if e["data"].get("bridge"):
+            e["classes"] += " bridge"
+    for a in ads:
+        if a["id"] in bridge_ads:
+            nodes[f"ad{a['id']}"]["classes"] += " bridge-ad"
+            nodes[f"ad{a['id']}"]["data"]["bridge_ad"] = True
     for nid, roles in domain_roles.items():
         nodes[nid]["data"]["domain_role"] = "docelowa" if roles == {"docelowa"} else             "pośrednia" if roles == {"pośrednia"} else "docelowa+pośrednia"
         nodes[nid]["classes"] = "domain " + ("hop" if roles == {"pośrednia"} else "target")
@@ -238,7 +280,37 @@ def persons():
     for a in pipeline.all_ads(conn):
         for p in a["persons"]:
             usage[p] = usage.get(p, 0) + 1
-    return [{**p, "ads": usage.get(p["id"], 0)} for p in pipeline.all_persons(conn)]
+    faces: dict[int, list] = {}
+    for r in conn.execute("SELECT id, person_id, image_path FROM person_faces ORDER BY id"):
+        faces.setdefault(r[1], []).append({"id": r[0], "image_path": r[2]})
+    return [{**p, "ads": usage.get(p["id"], 0), "faces": faces.get(p["id"], [])} for p in pipeline.all_persons(conn)]
+
+
+@app.post("/api/persons/{pid}/faces", status_code=201)
+async def add_person_face(pid: int, file: UploadFile = File(...)):
+    """Zdjęcie referencyjne osoby: wykrycie twarzy (YuNet), wektor cech (SFace), ponowne dopasowanie reklam."""
+    _get_or_404("SELECT * FROM persons WHERE id=?", (pid,), f"osoba #{pid}")
+    data = await file.read()
+    faces = await asyncio.to_thread(vision.face_embeddings, data)
+    if not faces:
+        raise HTTPException(422, "Nie wykryto twarzy na zdjęciu – użyj wyraźnego zdjęcia twarzy en face"
+                            if vision.faces_available() else "Moduł rozpoznawania twarzy niedostępny (brak modeli)")
+    face = faces[0]  # największa twarz
+    ext = (file.filename or "face.jpg").rsplit(".", 1)[-1][:5].lower()
+    fname = f"face_{pid}_{int(now() * 1000)}.{ext}"
+    (pipeline.UPLOADS / fname).write_bytes(data)
+    with connect() as conn:
+        fid = conn.execute("INSERT INTO person_faces(person_id, embedding, image_path, created_at) VALUES (?,?,?,?)",
+                           (pid, json.dumps(face["embedding"]), f"uploads/{fname}", now())).lastrowid
+    return {"ok": True, "id": fid, "box": face["box"], "faces_on_photo": len(faces),
+            "rematched_ads": await asyncio.to_thread(pipeline.rematch_persons)}
+
+
+@app.delete("/api/persons/{pid}/faces/{fid}")
+def del_person_face(pid: int, fid: int):
+    with connect() as conn:
+        conn.execute("DELETE FROM person_faces WHERE id=? AND person_id=?", (fid, pid))
+    return {"ok": True, "rematched_ads": pipeline.rematch_persons()}
 
 
 @app.post("/api/persons", status_code=201)
@@ -262,6 +334,7 @@ def update_person(pid: int, p: PersonIn):
 def del_person(pid: int):
     with connect() as conn:
         conn.execute("DELETE FROM persons WHERE id=?", (pid,))
+        conn.execute("DELETE FROM person_faces WHERE person_id=?", (pid,))
     return {"ok": True, "rematched_ads": pipeline.rematch_persons()}
 
 

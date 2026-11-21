@@ -38,7 +38,7 @@ async def run_source(src: dict) -> dict:
                 continue
             with conn:
                 conn.execute("INSERT INTO seen_items VALUES (?,?)", (src["id"], key))
-            prefetched = {k: it[k] for k in ("redirect_chain", "title", "description", "domain_age_days", "phash")
+            prefetched = {k: it[k] for k in pipeline.PREFETCH_KEYS
                           if k in it}
             await pipeline.analyze(source=f"scheduler:{src['id']}", url=it.get("url"), text=it.get("text"),
                                    prefetched=prefetched, external_id=it.get("id"))

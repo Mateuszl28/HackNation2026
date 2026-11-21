@@ -3,5 +3,9 @@ uvicorn>=0.30
 python-multipart>=0.0.9
 httpx>=0.27
 pillow>=10.4
-# opcjonalnie (OCR): pip install pytesseract + zainstalowany Tesseract z jezykiem pol
 imagehash>=4.3
+numpy>=2.0
+networkx>=3.3                 # podgrupy Louvain i mosty w kampaniach
+opencv-python-headless>=4.10  # twarze: YuNet (MIT) + SFace (Apache 2.0); modele: python tools/get_models.py
+rapidocr-onnxruntime==1.4.4   # OCR zrzutów (Apache 2.0), działa bez instalowania programów
+# opcjonalnie lepszy OCR dla polskiego: Tesseract (Apache 2.0) z językiem "pol" + pip install pytesseract

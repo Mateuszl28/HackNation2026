@@ -8,6 +8,7 @@ Tabele:
   campaign_watches  – obserwowane kampanie
   alerts            – powiadomienia o nowych wariantach obserwowanych kampanii
   persons           – baza referencyjna osób (rola, aliasy)
+  person_faces      – zdjęcia referencyjne osób i wektory cech twarzy (SFace)
   sources, seen_items, scan_log – scheduler: źródła, przetworzone pozycje, dziennik skanów
 """
 import json
@@ -44,7 +45,12 @@ CREATE TABLE IF NOT EXISTS ads (
     domain_age_days INTEGER,
     risk REAL,
     risk_reasons TEXT,              -- json list
-    cluster_id INTEGER
+    cluster_id INTEGER,
+    page_text TEXT,                 -- treść strony docelowej (do ponownego dopasowania osób/haseł)
+    ocr_text TEXT,                  -- tekst odczytany ze zrzutu
+    ocr_backend TEXT,
+    faces TEXT,                     -- json: [{box, score, embedding, person_id?, similarity?}]
+    infra TEXT                      -- json: trackers, tds, forms, ip, asn, net_name, cert_sha256, cert_sans, server...
 );
 CREATE TABLE IF NOT EXISTS ad_features (
     ad_id INTEGER NOT NULL,
@@ -69,7 +75,16 @@ CREATE TABLE IF NOT EXISTS campaigns (
     themes TEXT,                    -- json list
     persons TEXT,                   -- json list id osób
     first_seen REAL,
-    last_seen REAL
+    last_seen REAL,
+    subgroups TEXT,                 -- json: podgrupy Louvain [[ad_id,...],...]
+    bridges TEXT                    -- json: krawędzie-mosty [{a, b, score}] i reklamy-mosty
+);
+CREATE TABLE IF NOT EXISTS person_faces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL,
+    embedding TEXT NOT NULL,        -- json 128 float (SFace)
+    image_path TEXT,
+    created_at REAL
 );
 CREATE TABLE IF NOT EXISTS campaign_watches (
     campaign_id INTEGER PRIMARY KEY,
@@ -113,7 +128,11 @@ CREATE TABLE IF NOT EXISTS scan_log (
 );
 """
 
-JSON_FIELDS = {"redirect_chain", "keywords", "persons", "risk_reasons", "aliases", "reasons", "domains", "themes"}
+JSON_FIELDS = {"redirect_chain", "keywords", "persons", "risk_reasons", "aliases", "reasons", "domains", "themes",
+               "faces", "infra", "subgroups", "bridges", "embedding"}
+# kolumny dodane w kolejnych wersjach – migracja istniejących baz bez utraty danych
+MIGRATIONS = {"ads": {"page_text": "TEXT", "ocr_text": "TEXT", "ocr_backend": "TEXT", "faces": "TEXT", "infra": "TEXT"},
+              "campaigns": {"subgroups": "TEXT", "bridges": "TEXT"}}
 
 
 def connect() -> sqlite3.Connection:
@@ -141,6 +160,11 @@ def init_db() -> None:
         shutil.copyfile(SEED_FEED, FEED_PATH)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        for table, cols in MIGRATIONS.items():
+            have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+            for col, typ in cols.items():
+                if col not in have:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         if conn.execute("SELECT COUNT(*) FROM persons").fetchone()[0] == 0:
             for p in load_json(DATA_DIR / "persons_seed.json"):
                 conn.execute("INSERT INTO persons(name, role, aliases) VALUES (?,?,?)",

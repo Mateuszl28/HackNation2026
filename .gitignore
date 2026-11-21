@@ -4,3 +4,5 @@ __pycache__/
 data/fejkradar.db
 data/uploads/
 data/ad_library_feed.json
+models/*.onnx
+models/*.part

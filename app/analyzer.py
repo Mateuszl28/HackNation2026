@@ -101,11 +101,40 @@ def registrable_domain(url_or_host: str) -> str | None:
     return ".".join(parts[-2:]) if len(parts) >= 2 else host
 
 
+URL_TLDS = r"(?:pl|com|net|org|eu|io|co|info|biz|xyz|top|online|site|shop|store|live|click|icu|sbs|cfd|buzz|space|fun|ru)"
+
+
+def ocr_url_fix(text: str) -> str:
+    """Naprawia typowe błędy OCR w adresach: 'zysk-news . example. pl' / 'domena,pl' / 'https: //' / 'www .'."""
+    t = text or ""
+    t = re.sub(r"(?i)\b(https?)\s*:\s*/\s*/\s*", lambda m: m.group(1).lower() + "://", t)
+    t = re.sub(r"(?i)\bwww\s*[.,]\s*", "www.", t)
+    # człony domen piszemy małymi literami – dzięki temu nie sklejamy końca zdania z początkiem kolejnego
+    # ("szoku. Dni, pl" zostaje tekstem), a naprawiamy "example . pl", "example. pl", "zysk24,example.pl"
+    lab = r"[a-z0-9][a-z0-9-]*"
+    t = re.sub(rf"\b({lab})\s*\.\s+(?={URL_TLDS}\b)", r"\1.", t)
+    t = re.sub(rf"\b({lab})\s+\.\s*(?={URL_TLDS}\b)", r"\1.", t)
+    t = re.sub(rf"\b({lab}),(?={URL_TLDS}\b(?!\w))", r"\1.", t)
+    t = re.sub(rf"\b({lab}),({lab}\.{URL_TLDS}\b)", r"\1.\2", t)
+    t = re.sub(rf"\b({lab})\s+\.\s*({lab}\.{URL_TLDS}\b)", r"\1.\2", t)
+    return t
+
+
 def find_urls(text: str) -> list[str]:
-    urls = re.findall(r"https?://[^\s\"'<>]+", text or "")
-    bare = re.findall(r"\b(?:[a-z0-9-]+\.)+(?:pl|com|net|org|eu|xyz|top|online|site|shop|info|live|click|icu|sbs|cfd)"
-                      r"\b(?:/[^\s]*)?", normalize(text))
-    out = list(dict.fromkeys(urls + [b if b.startswith("http") else "https://" + b for b in bare]))
+    """Adresy z tekstu – także z tekstu OCR, gdzie link jest częścią grafiki ('zysk-news.pl/oferta')."""
+    t = ocr_url_fix(text)
+    urls = [u.rstrip(".,;:!?)\"'") for u in re.findall(r"https?://[^\s\"'<>]+", t)]
+    bare = re.findall(rf"(?<![@\w.-])(?:www\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+{URL_TLDS}\b(?:/[^\s\"'<>]*)?",
+                      normalize(t))
+    out: list[str] = []
+    for u in urls + [b if b.startswith("http") else "https://" + b for b in bare]:
+        u = u.rstrip(".,;:!?)")
+        host = registrable_domain(u)
+        if host in TWO_LEVEL_SUFFIXES:  # sam sufiks (np. "example.pl" z ucięcia OCR) to nie adres
+            continue
+        if host and not any(registrable_domain(o) == host and urlparse(o).path in ("", "/") for o in out):
+            if not any(o.startswith(u) or u.startswith(o) for o in out):
+                out.append(u)
     return out[:5]
 
 
@@ -148,11 +177,132 @@ def match_persons(text: str, persons: list[dict]) -> list[int]:
 
 # ---------------------------------------------------------------- obraz
 def ocr_image(data: bytes) -> str:
+    """Tekst ze zrzutu (silnik wybiera app/vision.py: Tesseract -> RapidOCR -> EasyOCR)."""
+    from .vision import ocr_image as _ocr
+    return _ocr(data)["text"]
+
+
+# ---------------------------------------------------------------- strona docelowa: ślady infrastruktury
+TRACKER_PATTERNS = [
+    # (rodzaj, regex) – identyfikatory kont reklamowych/analitycznych są wspólne dla wszystkich stron operatora
+    ("meta_pixel", r"fbq\(\s*['\"]init['\"]\s*,\s*['\"](\d{10,20})"),
+    ("meta_pixel", r"facebook\.com/tr\?id=(\d{10,20})"),
+    ("google_tag", r"\b(G-[A-Z0-9]{6,12})\b"),
+    ("google_ua", r"\b(UA-\d{4,10}-\d{1,4})\b"),
+    ("google_tm", r"\b(GTM-[A-Z0-9]{4,9})\b"),
+    ("google_ads", r"\b(AW-\d{9,11})\b"),
+    ("tiktok_pixel", r"ttq\.load\(\s*['\"]([A-Z0-9]{15,25})"),
+    ("yandex_metrika", r"ym\(\s*(\d{6,10})\s*,\s*['\"]init"),
+    ("yandex_metrika", r"mc\.yandex\.ru/watch/(\d{6,10})"),
+    ("hotjar", r"hjid\s*:\s*(\d{5,10})"),
+]
+# zestawy do cloakingu / dystrybucji ruchu (TDS) – typowe dla kampanii oszustw
+TDS_PATTERNS = [("keitaro", r"keitaro|/\?_lp=1|_token=[a-f0-9]{20,}"), ("binom", r"binom|/click\.php\?lp="),
+                ("palladium", r"palladium"), ("clickid", r"[?&](?:clickid|subid|sub_id|fbclid_redirect)=")]
+FORM_FIELDS = {
+    # rodzaj formularza: wzorce nazw/typów pól (po fold – bez polskich znaków)
+    "haslo": [r"type=['\"]?password"],
+    "karta": [r"cc-number|cc-exp|cc-csc|card.?number|numer.?karty|cvv|cvc|data.?waznosci"],
+    "blik": [r"\bblik\b"],
+    "bank": [r"\biban\b|numer.?konta|nr.?konta|login.?bank|bankowosc"],
+    "pesel": [r"\bpesel\b|numer.?dowodu"],
+    "lead": [r"name=['\"]?(first.?name|imie|fname)", r"name=['\"]?(last.?name|nazwisko|lname)",
+             r"type=['\"]?tel|name=['\"]?(phone|telefon)"],
+}
+FORM_RISK = {"karta": 0.35, "blik": 0.35, "bank": 0.3, "haslo": 0.2, "pesel": 0.3, "lead": 0.15}
+FORM_NAMES = {"karta": "dane karty płatniczej", "blik": "kod BLIK", "bank": "dane bankowe/logowanie do banku",
+              "haslo": "hasło", "pesel": "PESEL/dowód", "lead": "formularz kontaktowy „inwestora” (imię, nazwisko, telefon)"}
+
+
+def extract_page_signals(body: str) -> dict:
+    """Ślady w HTML strony docelowej: ID pikseli/analityki, zestawy TDS, formularze wyłudzające dane."""
+    trackers = sorted({f"{kind}:{m}" for kind, rx in TRACKER_PATTERNS for m in re.findall(rx, body or "")})
+    # dla HTML tylko małe litery i bez polskich znaków (bez zamiany cyfr na litery – psułaby adresy i parametry)
+    low = "".join(c for c in unicodedata.normalize("NFKD", normalize(body or "").translate(_PL))
+                  if not unicodedata.combining(c))
+    tds = sorted({kind for kind, rx in TDS_PATTERNS if re.search(rx, low)})
+    forms = []
+    for form_html in re.findall(r"<form\b.*?</form>", low, flags=re.S) or ([low] if "<input" in low else []):
+        for kind, rxs in FORM_FIELDS.items():
+            hits = sum(bool(re.search(rx, form_html)) for rx in rxs)
+            if (kind == "lead" and hits >= 2) or (kind != "lead" and hits):
+                forms.append(kind)
+    return {"trackers": trackers, "tds": tds, "forms": sorted(set(forms))}
+
+
+def _cert_info(host: str, port: int = 443) -> dict:
+    """Odcisk SHA-256 certyfikatu, wystawca i domeny z SAN (inne domeny na tym samym certyfikacie)."""
+    import hashlib
+    import socket
+    import ssl
+    out = {}
     try:
-        import pytesseract  # opcjonalne – wymaga zainstalowanego Tesseracta z językiem pol
-        return pytesseract.image_to_string(Image.open(io.BytesIO(data)), lang="pol+eng")
+        ctx = ssl.create_default_context()
+        with socket.create_connection((host, port), timeout=5) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as s:
+                der, info = s.getpeercert(binary_form=True), s.getpeercert()
+        out["cert_sha256"] = hashlib.sha256(der).hexdigest()
+        out["cert_issuer"] = dict(x[0] for x in info.get("issuer", ())).get("organizationName")
+        out["cert_sans"] = sorted({v.lower() for k, v in info.get("subjectAltName", ()) if k == "DNS"})[:50]
+    except ssl.SSLError:
+        try:  # niepoprawny/samopodpisany certyfikat – sam odcisk też jest śladem
+            ctx = ssl._create_unverified_context()
+            with socket.create_connection((host, port), timeout=5) as sock:
+                with ctx.wrap_socket(sock, server_hostname=host) as s:
+                    out["cert_sha256"] = hashlib.sha256(s.getpeercert(binary_form=True)).hexdigest()
+                    out["cert_invalid"] = True
+        except Exception:
+            pass
     except Exception:
-        return ""
+        pass
+    return out
+
+
+async def _ip_info(host: str) -> dict:
+    """IP hosta i sieć/ASN z RDAP rejestru IP (RIPE/ARIN… przez rdap.org)."""
+    import socket
+    out = {}
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+        ip = next((i[4][0] for i in infos if i[0] == socket.AF_INET), infos[0][4][0])
+        out["ip"] = ip
+        async with httpx.AsyncClient(timeout=6, follow_redirects=True,
+                                     headers={"Accept": "application/rdap+json"}) as client:
+            r = await client.get(f"https://rdap.org/ip/{ip}")
+            if r.status_code == 200:
+                j = r.json()
+                out["net_name"] = j.get("name")
+                out["net_country"] = j.get("country")
+                cidr = (j.get("cidr0_cidrs") or [{}])[0]
+                if cidr.get("v4prefix"):
+                    out["net_cidr"] = f"{cidr['v4prefix']}/{cidr.get('length')}"
+                asns = [str(a) for a in (j.get("arin_originas0_originautnums") or [])]
+                if asns:
+                    out["asn"] = "AS" + asns[0]
+            if "asn" not in out:  # RDAP RIPE/APNIC nie podaje ASN – RIPEstat (publiczne API, bez klucza)
+                r = await client.get("https://stat.ripe.net/data/network-info/data.json", params={"resource": ip})
+                if r.status_code == 200:
+                    d = r.json().get("data") or {}
+                    if d.get("asns"):
+                        out["asn"] = "AS" + str(d["asns"][0])
+                    out.setdefault("net_cidr", d.get("prefix"))
+    except Exception:
+        pass
+    return out
+
+
+async def host_signals(url: str, headers: dict | None = None) -> dict:
+    host = (urlparse(url).hostname or "").lower()
+    if not host:
+        return {}
+    ip_task = asyncio.create_task(_ip_info(host))
+    cert = await asyncio.to_thread(_cert_info, host) if url.startswith("https") else {}
+    info = {**(await ip_task), **cert}
+    h = {k.lower(): v for k, v in (headers or {}).items()}
+    for key, name in (("server", "server"), ("x-powered-by", "powered_by")):
+        if h.get(key):
+            info[name] = h[key][:80]
+    return info
 
 
 def dhash(data: bytes, size: int = 8) -> str | None:
@@ -192,7 +342,7 @@ def demo_web() -> dict:
                     if i + 1 < len(chain):
                         node["next"] = chain[i + 1]
                     else:
-                        node.update({k: it.get(k) for k in ("title", "description", "text", "domain_age_days")})
+                        node.update({k: it.get(k) for k in ("title", "description", "text", "domain_age_days", "infra")})
         _DEMO_WEB = web
     return _DEMO_WEB
 
@@ -210,9 +360,15 @@ def _simulate(url: str) -> dict:
         chain.append(url)
         hops.append({"url": url, "status": 200, "via": "demo"})
     page = web.get(url, {})
+    if not page.get("infra") and not page.get("title"):
+        # inna podstrona znanej domeny demo – ta sama witryna: wiek domeny, infrastruktura, tytuł
+        dom = registrable_domain(url)
+        page = next((v for u, v in web.items() if registrable_domain(u) == dom and (v.get("infra") or v.get("title"))),
+                    page)
     return {"input_url": chain[0], "final_url": url, "redirect_chain": chain, "hops": hops,
             "title": page.get("title"), "description": page.get("description"), "page_text": page.get("text") or "",
-            "offline": True, "domain_age_days": page.get("domain_age_days"), "cloaking": None, "error": None}
+            "offline": True, "domain_age_days": page.get("domain_age_days"), "cloaking": None, "error": None,
+            "infra": dict(page.get("infra") or {})}
 
 
 # ---------------------------------------------------------------- przekierowania (sieć)
@@ -233,7 +389,7 @@ def _soft_redirect(body: str) -> tuple[str, str] | None:
 
 
 async def follow_redirects(url: str, ua: str = UA_ANDROID) -> dict:
-    hops, body, error = [], "", None
+    hops, body, error, final_headers = [], "", None, {}
     try:
         async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False,
                                      headers={"User-Agent": ua, "Accept-Language": "pl-PL,pl;q=0.9"}) as client:
@@ -245,6 +401,7 @@ async def follow_redirects(url: str, ua: str = UA_ANDROID) -> dict:
                     cur = urljoin(cur, r.headers["location"])
                     continue
                 body = r.text[:500_000] if "html" in r.headers.get("content-type", "html") else ""
+                final_headers = dict(r.headers)
                 soft = _soft_redirect(body)
                 if soft and urljoin(cur, soft[0]) not in {h["url"] for h in hops}:
                     hops[-1]["via"] = soft[1]
@@ -261,7 +418,8 @@ async def follow_redirects(url: str, ua: str = UA_ANDROID) -> dict:
     return {"input_url": url, "final_url": hops[-1]["url"], "redirect_chain": [h["url"] for h in hops], "hops": hops,
             "title": (html.unescape(t.group(1)).strip()[:300] if t else None) or _meta(body, "og:title"),
             "description": _meta(body, "description") or _meta(body, "og:description"),
-            "page_text": text[:5000], "offline": False, "domain_age_days": None, "error": error}
+            "page_text": text[:5000], "offline": False, "domain_age_days": None, "error": error,
+            "infra": extract_page_signals(body), "headers": final_headers}
 
 
 async def analyze_url(url: str) -> dict:
@@ -272,6 +430,10 @@ async def analyze_url(url: str) -> dict:
     dm, dd = registrable_domain(mobile["final_url"]), registrable_domain(desktop["final_url"])
     mobile["cloaking"] = ({"mobile": dm, "desktop": dd}
                           if dm and dd and dm != dd and not mobile["error"] and not desktop["error"] else None)
+    # ślady infrastruktury strony docelowej: IP/sieć/ASN, certyfikat SSL, nagłówki serwera
+    if not mobile["error"] or len(mobile["hops"]) > 1:
+        mobile["infra"].update(await host_signals(mobile["final_url"], mobile.pop("headers", {})))
+    mobile.pop("headers", None)
     return mobile
 
 
@@ -341,6 +503,17 @@ def risk_score(ad: dict, page: dict | None = None, person_names: list[str] | Non
         score += 0.3
         reasons.append(f"cloaking: telefon trafia na {page['cloaking']['mobile']}, "
                        f"komputer na {page['cloaking']['desktop']}")
+    infra = ad.get("infra") or {}
+    forms = infra.get("forms") or []
+    if forms:
+        score += min(0.45, sum(FORM_RISK.get(f, 0.1) for f in forms))
+        reasons.append("strona docelowa zbiera: " + ", ".join(FORM_NAMES.get(f, f) for f in forms))
+    if infra.get("tds"):
+        score += 0.2
+        reasons.append("ślady systemu dystrybucji ruchu/cloakingu (TDS): " + ", ".join(infra["tds"]))
+    if infra.get("cert_invalid"):
+        score += 0.1
+        reasons.append("niepoprawny certyfikat SSL strony docelowej")
     if ad.get("persons"):
         score += 0.2
         who = ", ".join(person_names) if person_names else "osoby publicznej"

@@ -51,6 +51,16 @@
   .banner { background:#1d2a3d; border:1px solid #2f4a6e; color:#cfe2ff; border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:14px; }
   .banner.warn { background:#3d2a14; border-color:#6e4a2f; color:#ffe0b3; }
   #preview { display:block; margin-top:8px; } #preview[hidden], .banner[hidden] { display:none; }
+  .shotwrap { position:relative; display:inline-block; max-width:100%; }
+  .shotwrap img.shot { display:block; }
+  .facebox { position:absolute; border:2px solid #ffd23f; border-radius:4px; pointer-events:none; }
+  .facebox span { position:absolute; left:-2px; top:-20px; background:#ffd23f; color:#111; font-size:11px; padding:1px 4px; border-radius:3px; white-space:nowrap; }
+  details.box { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:6px 10px; margin:8px 0; }
+  details.box summary { cursor:pointer; font-size:14px; font-weight:600; }
+  .kv { display:grid; grid-template-columns:max-content 1fr; gap:2px 10px; font-size:13px; margin-top:6px; }
+  .kv b { color:var(--muted); font-weight:500; }
+  .warnline { color:#ffd58a; font-size:13px; }
+  .faces img { width:44px; height:44px; object-fit:cover; border-radius:6px; border:1px solid var(--line); margin-right:4px; vertical-align:middle; }
   .filebtns { display:flex; gap:8px; align-items:center; flex-wrap:wrap; } .filebtns .btn { margin-top:0; }
   #alertBar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; width:100%; background:#3a1512; border:1px solid #7a2a22;
     color:#ffd9d4; border-radius:10px; padding:8px 12px; font-size:14px; }
@@ -131,7 +141,10 @@
       <span><i class="dot" style="background:#4c8bf5;border-radius:2px"></i>domena docelowa</span>
       <span><i class="dot" style="background:#7d8799;border-radius:2px"></i>domena z przekierowań</span>
       <span><i class="dot" style="background:#b36ae2;transform:rotate(45deg);border-radius:1px"></i>osoba</span>
-      <span>━ <span style="color:#d33a2c">podobieństwo</span></span> <span>┅ przekierowanie</span>
+      <span><i class="dot" style="background:#f28c28;border-radius:0;clip-path:polygon(50% 0,100% 100%,0 100%)"></i>identyfikator śledzący</span>
+      <span><i class="dot" style="background:#2bb3a0;border-radius:2px"></i>sieć/ASN</span>
+      <span><i class="dot" style="background:#e6c229;border-radius:2px"></i>wspólny certyfikat SSL</span>
+      <span>━ <span style="color:#d33a2c">podobieństwo</span></span> <span>┅ przekierowanie</span> <span style="color:#ffd23f">━ ━ most / ◎ reklama-most</span>
       <br><span class="muted">grubość czerwonej krawędzi = siła połączenia; kliknij krawędź, by zobaczyć powody, a reklamę – by otworzyć raport</span>
       <select id="graphFilter" style="margin-top:8px"></select>
     </div>
@@ -147,7 +160,9 @@
         <label>Rola (np. lekarz, polityk, prezenter)</label><input name="role">
         <label>Aliasy (po przecinku)</label><input name="aliases" placeholder="dr Kowalski, Kowalski">
         <button class="btn">Dodaj</button>
-        <p class="muted small">MVP: dopasowanie po nazwisku/aliasach w tekście i OCR. Dopasowanie twarzy – kolejny etap (embeddingi twarzy, tylko osoby publiczne – RODO art. 9).</p>
+        <p class="muted small">Dopasowanie: imię/nazwisko/aliasy w tekście i OCR (z odmianą) oraz <b>twarz</b> – dodaj zdjęcie referencyjne w tabeli obok
+          (wykrywanie YuNet, wektory SFace – modele OpenCV na licencjach MIT/Apache). Tylko osoby publiczne – wizerunek to dane szczególnej kategorii (RODO art. 9).</p>
+        <p class="small" id="capInfo"></p>
       </form>
       <div class="card"><table id="personTable"></table></div>
     </div>
@@ -219,18 +234,74 @@ function renderReport(rep) {
     <p>${c.known
       ? `⚠️ <b>Pasuje do znanej kampanii #${c.cluster_id}: ${esc(c.name)}</b> (${c.size} materiałów)`
       : `Nowy materiał – brak dopasowania do znanych kampanii`}</p>
-    ${a.image_path ? `<img class="shot" src="/${esc(a.image_path)}">` : ""}
+    ${a.image_path ? `<div class="shotwrap"><img class="shot" id="reportShot" src="/${esc(a.image_path)}"></div>` : ""}
     <ul class="reasons">${a.risk_reasons.map(r => `<li>${esc(r)}</li>`).join("") || "<li class='muted'>brak sygnałów ryzyka</li>"}</ul>
+    ${bridgeNote(c, a.id)}
     <div class="small"><b>Domena docelowa:</b> ${esc(a.domain || "—")} ${a.domain_age_days != null ? `<span class="muted">(${a.domain_age_days} dni)</span>` : ""}</div>
     ${a.redirect_chain.length > 1 ? `<div class="small"><b>Przekierowania:</b><br>${a.redirect_chain.map(u => `<code>${esc(u)}</code>`).join(" →<br>")}</div>` : ""}
     ${a.title ? `<div class="small"><b>Tytuł strony:</b> ${esc(a.title)}</div>` : ""}
-    ${rep.persons.length ? `<div class="small"><b>Osoby:</b> ${rep.persons.map(p => `${esc(p.name)} <span class="muted">(${esc(p.role)})</span>`).join(", ")}</div>` : ""}
+    ${rep.persons.length ? `<div class="small"><b>Osoby:</b> ${rep.persons.map(p => `${esc(p.name)} <span class="muted">(${esc(p.role)}; ${
+      p.via.map(v => v === "twarz" ? `twarz ${(p.face_similarity ?? 0).toFixed(2)}` : `tekst ${esc(p.matched || "")}`).join(" + ")})</span>`).join(", ")}</div>` : ""}
+    ${a.faces?.length && !rep.persons.some(p => p.via.includes("twarz")) ? `<div class="small"><b>Twarze na grafice:</b> ${a.faces.length} – brak w bazie referencyjnej (porównywane z innymi reklamami)</div>` : ""}
     <div>${a.keywords.map(k => `<span class="tag">${esc(k)}</span>`).join("")}</div>
+    ${infraBox(a.infra)}
+    ${a.ocr_text ? `<details class="box"><summary>🔤 Tekst odczytany ze zrzutu (OCR: ${esc(a.ocr_backend)})</summary><pre class="small" style="white-space:pre-wrap;margin:6px 0">${esc(a.ocr_text)}</pre></details>` : ""}
     ${rep.matches.length ? `<p class="small"><b>Najbliższe materiały:</b></p><ul class="reasons small">${rep.matches.map(m =>
       `<li><a href="#ad/${m.ad_id}">#${m.ad_id}</a> – ${m.score.toFixed(2)}: ${esc(m.reasons.join("; "))}</li>`).join("")}</ul>` : ""}
     <button class="btn ${rep.watched ? "ghost" : ""}" onclick="toggleWatch(${c.cluster_id}, ${rep.watched}, ${a.id})">
       ${rep.watched ? "✓ Obserwujesz tę kampanię (kliknij, by przestać)" : "🔔 Obserwuj tę kampanię"}</button>
   </div>`;
+  drawFaces(a, rep.persons);
+}
+
+// ramki twarzy na zrzucie (współrzędne w pikselach oryginału -> skala wyświetlania)
+function drawFaces(a, persons) {
+  const img = $("#reportShot");
+  if (!img || !a.faces?.length) return;
+  const place = () => {
+    img.parentElement.querySelectorAll(".facebox").forEach(n => n.remove());
+    const k = img.clientWidth / img.naturalWidth;
+    for (const f of a.faces) {
+      const [x, y, w, h] = f.box, box = document.createElement("div");
+      box.className = "facebox";
+      Object.assign(box.style, {left: `${x * k}px`, top: `${y * k}px`, width: `${w * k}px`, height: `${h * k}px`});
+      box.innerHTML = `<span>${f.person_id ? `${esc(f.name || persons.find(p => p.id === f.person_id)?.name || "")} ${(f.similarity ?? 0).toFixed(2)}` : "twarz"}</span>`;
+      img.parentElement.append(box);
+    }
+  };
+  img.complete ? place() : img.addEventListener("load", place, {once: true});
+}
+
+const FORM_LABELS = {karta: "dane karty", blik: "kod BLIK", bank: "dane bankowe", haslo: "hasło", pesel: "PESEL/dowód", lead: "formularz „inwestora”"};
+function infraBox(inf) {
+  if (!inf || !Object.keys(inf).length) return "";
+  const rows = [
+    ["Identyfikatory śledzące", (inf.trackers || []).map(t => `<code>${esc(t)}</code>`).join(", ")],
+    ["Formularze", (inf.forms || []).map(f => `<span class="warnline">${esc(FORM_LABELS[f] || f)}</span>`).join(", ")],
+    ["TDS / cloaking", (inf.tds || []).map(esc).join(", ")],
+    ["Serwer (IP)", inf.ip ? `${esc(inf.ip)}${inf.net_cidr ? ` <span class="muted">${esc(inf.net_cidr)}</span>` : ""}` : ""],
+    ["Sieć / ASN", [inf.net_name, inf.asn, inf.net_country].filter(Boolean).map(esc).join(" · ")],
+    ["Certyfikat SSL", inf.cert_sha256 ? `${esc(inf.cert_issuer || "")} <code>${esc(inf.cert_sha256.slice(0, 16))}…</code>${inf.cert_invalid ? ' <span class="warnline">niepoprawny</span>' : ""}` : ""],
+    ["Inne domeny na certyfikacie", (inf.cert_sans || []).slice(0, 6).map(esc).join(", ")],
+    ["Nagłówek Server", esc(inf.server || inf.powered_by || "")],
+  ].filter(([, v]) => v);
+  if (!rows.length) return "";
+  return `<details class="box" open><summary>🛰️ Strona docelowa – ślady infrastruktury</summary>
+    <div class="kv">${rows.map(([k, v]) => `<b>${k}</b><span>${v}</span>`).join("")}</div></details>`;
+}
+const partsTxt = (parts) => parts.map(g => "[" + g.map(i => "#" + i).join(" ") + "]").join(" i ");
+function bridgeText(br) {
+  const out = [];
+  if (br.edges?.length) out.push(`pojedyncze połączenie ${br.edges.map(e => `#${e.a}–#${e.b} (${e.score.toFixed(2)})`).join(", ")}`);
+  if (br.ads?.length) out.push(br.ads.map(x => `reklamę-most #${x.ad} (bez niej: ${partsTxt(x.parts)})`).join(", "));
+  return out.join("; ");
+}
+function bridgeNote(c, adId) {
+  const br = c.bridges || {};
+  if (!br.edges?.length && !br.ads?.length) return "";
+  const mine = (br.ads || []).some(x => x.ad === adId) || (br.edges || []).some(e => e.a === adId || e.b === adId);
+  return `<div class="banner warn">🔗 Ta kampania jest sklejona przez ${bridgeText(br)}${mine ? " – <b>ta reklama jest mostem</b>" : ""}.
+    Zweryfikuj, czy to na pewno ta sama operacja.${c.subgroups?.length ? ` Podgrupy (Louvain): ${partsTxt(c.subgroups)}` : ""}</div>`;
 }
 async function openAd(id) { show("submit"); renderReport(await api(`/api/ads/${id}`)); }
 async function toggleWatch(cid, watched, adId) {
@@ -266,6 +337,8 @@ async function loadClusters() {
     <div class="small"><b>Domeny:</b> ${c.domains.map(esc).join(", ") || "—"}</div>
     <div>${c.keywords.map(k => `<span class="tag">${esc(k)}</span>`).join("")}</div>
     <div class="small">Materiały: ${c.ads.map(id => `<a href="#ad/${id}">#${id}</a>`).join(" ")}</div>
+    ${c.subgroups?.length ? `<div class="small"><b>Podgrupy (Louvain):</b> ${c.subgroups.map(g => "[" + g.map(i => `<a href="#ad/${i}">#${i}</a>`).join(" ") + "]").join(" ")}</div>` : ""}
+    ${c.bridges?.edges?.length || c.bridges?.ads?.length ? `<div class="warnline">🔗 Sklejona przez ${bridgeText(c.bridges)} – do weryfikacji</div>` : ""}
   </div>`).join("") || `<div class="card muted">Brak danych – scheduler zaraz zeskanuje bibliotekę.</div>`;
 }
 let graphCampaign = "";
@@ -302,7 +375,8 @@ async function loadGraph() {
   const g = await api("/api/graph" + (chosen ? `?campaign=${chosen}` : ""));
   // API zwraca gotowe elementy Cytoscape.js – dokładamy tylko kolory
   g.elements.nodes.forEach(n => { n.data.color = n.data.type === "ad" ? clusterColor(n.data.campaign)
-    : n.data.type === "person" ? "#b36ae2" : n.data.domain_role === "pośrednia" ? "#7d8799" : "#4c8bf5"; });
+    : n.data.type === "person" ? "#b36ae2" : n.data.type === "tracker" ? "#f28c28" : n.data.type === "network" ? "#2bb3a0"
+    : n.data.type === "cert" ? "#e6c229" : n.data.domain_role === "pośrednia" ? "#7d8799" : "#4c8bf5"; });
   cy?.destroy();
   cy = cytoscape({
     container: $("#cy"), elements: g.elements,
@@ -312,10 +386,18 @@ async function loadGraph() {
       {selector: "node.domain", style: {shape: "round-rectangle"}},
       {selector: "node.hop", style: {"border-width": 2, "border-style": "dashed", "border-color": "#cfd5e0"}},
       {selector: "node.person", style: {shape: "diamond"}},
+      {selector: "node.tracker", style: {shape: "triangle"}},
+      {selector: "node.network", style: {shape: "hexagon"}},
+      {selector: "node.cert", style: {shape: "tag"}},
+      {selector: "edge.tracker-link", style: {"line-color": "#7a5a2e"}},
+      {selector: "edge.hosting-link", style: {"line-color": "#2b5f57", "line-style": "dotted"}},
+      {selector: "edge.cert-link", style: {"line-color": "#7a6a1e"}},
       {selector: "edge", style: {width: 1, "line-color": "#3a4150", "curve-style": "bezier"}},
       {selector: "edge.similar", style: {"line-color": "#d33a2c", opacity: .75, width: "mapData(score, 0.6, 2, 1.5, 6)"}},
       {selector: "edge.redirect", style: {"line-style": "dashed"}},
       {selector: "edge.person-link", style: {"line-color": "#6b4a85"}},
+      {selector: "node.bridge-ad", style: {"border-width": 4, "border-color": "#ffd23f", "border-style": "double"}},
+      {selector: "edge.bridge", style: {"line-color": "#ffd23f", "line-style": "dashed", opacity: 1}},
       {selector: ":selected", style: {"border-width": 3, "border-color": "#fff", "line-color": "#fff"}},
     ],
     layout: {name: "cose", animate: false, nodeRepulsion: 9000, idealEdgeLength: 70, padding: 30},
@@ -326,14 +408,17 @@ async function loadGraph() {
   const label = (id) => cy.getElementById(id).data("label");
   cy.on("tap", "edge", e => { const d = e.target.data();
     if (d.type === "podobieństwo") {
-      $("#edgeInfo").innerHTML = `<b>Połączenie ${esc(label(d.source))} ↔ ${esc(label(d.target))}</b> – wynik <b>${d.score.toFixed(2)}</b> (próg > ${g.meta.threshold})
+      $("#edgeInfo").innerHTML = (d.bridge ? `<div class="warnline">🔗 Most – to jedyne połączenie między dwiema częściami kampanii</div>` : "") + `<b>Połączenie ${esc(label(d.source))} ↔ ${esc(label(d.target))}</b> – wynik <b>${d.score.toFixed(2)}</b> (próg > ${g.meta.threshold})
         <ul class="reasons">${d.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul>`;
     } else {
       $("#edgeInfo").innerHTML = `<b>${esc(d.type)}</b>: ${esc(label(d.source))} → ${esc(label(d.target))}`;
     } });
   cy.on("tap", "node", e => { const d = e.target.data();
-    if (d.type === "ad") openAd(d.ad_id);
+    if (d.type === "ad") openAd(d.ad_id);  // reklama-most ma żółtą obwódkę
     else if (d.type === "person") $("#edgeInfo").innerHTML = `<b>Osoba:</b> ${esc(d.label)}${d.role ? ` (${esc(d.role)})` : ""} – w ${d.degree} reklamach`;
+    else if (d.type === "tracker") $("#edgeInfo").innerHTML = `<b>Identyfikator śledzący:</b> ${esc(d.label)} – na stronach ${d.degree} reklam (to samo konto reklamowe/analityczne)`;
+    else if (d.type === "network") $("#edgeInfo").innerHTML = `<b>Sieć hostingowa:</b> ${esc(d.label)} – ${d.degree} reklam`;
+    else if (d.type === "cert") $("#edgeInfo").innerHTML = `<b>Wspólny certyfikat SSL:</b> ${esc(d.label)} – ${d.degree} reklam na różnych domenach`;
     else $("#edgeInfo").innerHTML = `<b>Domena ${esc(d.domain_role)}:</b> ${esc(d.label)} – powiązań: ${d.degree}`; });
 }
 $("#graphFilter").addEventListener("change", () => { graphCampaign = $("#graphFilter").value; loadGraph(); });
@@ -341,10 +426,27 @@ $("#graphFilter").addEventListener("change", () => { graphCampaign = $("#graphFi
 // ---------- osoby ----------
 async function loadPersons() {
   const ps = await api("/api/persons");
-  $("#personTable").innerHTML = `<tr><th>Osoba</th><th>Rola</th><th>Aliasy</th><th>Reklamy</th><th></th></tr>` + ps.map(p =>
+  $("#personTable").innerHTML = `<tr><th>Osoba</th><th>Rola</th><th>Aliasy</th><th>Reklamy</th><th>Twarz</th><th></th></tr>` + ps.map(p =>
     `<tr><td>${esc(p.name)}</td><td>${esc(p.role)}</td><td>${p.aliases.map(esc).join(", ")}</td><td>${p.ads}</td>
+     <td class="faces">${p.faces.map(f => `<img src="/${esc(f.image_path)}" title="kliknij, aby usunąć" onclick="delFace(${p.id}, ${f.id})">`).join("")}
+       <label class="btn ghost" style="margin:0;display:inline-block;padding:4px 8px;font-size:13px;cursor:pointer">📷 dodaj
+         <input type="file" accept="image/*" hidden onchange="addFace(${p.id}, this)"></label></td>
      <td><button class="btn ghost" style="margin:0" onclick="delPerson(${p.id})">usuń</button></td></tr>`).join("");
+  try {
+    const cap = await api("/api/capabilities");
+    $("#capInfo").innerHTML = `OCR: <b>${esc(cap.ocr || "brak")}</b>${cap.tesseract_installed ? "" : " <span class='muted'>(Tesseract nie zainstalowany)</span>"} · rozpoznawanie twarzy: <b>${cap.faces ? "aktywne" : "niedostępne"}</b>`;
+  } catch {}
 }
+async function addFace(pid, input) {
+  const file = input.files[0]; if (!file) return;
+  const fd = new FormData(); fd.append("file", file);
+  try {
+    const r = await api(`/api/persons/${pid}/faces`, {method: "POST", body: fd});
+    $("#capInfo").textContent = `Dodano twarz (${r.faces_on_photo > 1 ? `na zdjęciu ${r.faces_on_photo} twarze – użyto największej; ` : ""}ponownie dopasowano reklam: ${r.rematched_ads}).`;
+  } catch (e) { $("#capInfo").textContent = "Błąd: " + (JSON.parse(e.message || "{}").detail || e.message); }
+  loadPersons();
+}
+async function delFace(pid, fid) { await api(`/api/persons/${pid}/faces/${fid}`, {method: "DELETE"}); loadPersons(); }
 async function delPerson(id) { await api(`/api/persons/${id}`, {method: "DELETE"}); loadPersons(); }
 $("#personForm").addEventListener("submit", async e => {
   e.preventDefault(); const f = new FormData(e.target);

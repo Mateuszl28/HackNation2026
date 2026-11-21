@@ -8,6 +8,11 @@ Każda para reklam dostaje punkty za wspólne cechy:
   te same hasła oszustw (Jaccard zbiorów haseł) ........ 0.30 × J
   ta sama osoba z bazy referencyjnej ................... 0.35
   ten sam szablon graficzny (Hamming dHash ≤ 6) ........ 0.45 × (1 − d/12)
+  ślady infrastruktury strony docelowej (trudne do ukrycia):
+    wspólny identyfikator śledzący (piksel Meta, GA/GTM, TikTok, Metrika) ... 0.65  – sam wystarcza do połączenia
+    ten sam certyfikat SSL / domena na certyfikacie drugiej (SAN) ......... 0.50
+    ten sam adres IP serwera (przy różnych domenach) ...................... 0.30
+  ta sama twarz na grafikach (SFace, cosinus ≥ 0.363), gdy osoba nie jest w bazie ... 0.40
 
 Wynik > 0.6 => krawędź z listą powodów (similarity_edges) i ta sama kampania.
 
@@ -16,6 +21,12 @@ Przypisanie jest przyrostowe (assign_ad): nowa reklama porównywana jest ze wszy
  - krawędzie do jednej kampanii   -> dołącza do niej,
  - krawędzie do kilku kampanii    -> kampanie są scalane w najstarszą (najmniejsze id).
 rebuild() przelicza wszystko od zera (po resecie, zmianie bazy osób lub wag).
+
+Struktura kampanii (refresh_campaign): kampania = spójna składowa grafu połączeń (reklama A–B, B–C => A, B, C
+w jednej kampanii, nawet gdy A i C nie mają wspólnych cech). Wewnątrz kampanii liczone są:
+ - podgrupy metodą Louvain (modularność ważona wynikami połączeń) – „wątki” jednej operacji,
+ - mosty: pojedyncze połączenia, których usunięcie rozdziela kampanię na dwie części (≥ 2 reklamy każda),
+   oraz reklamy-mosty – do weryfikacji przez analityka, czy scalenie jest zasadne.
 """
 import json
 import re
@@ -31,6 +42,10 @@ WEIGHTS = {
     "keywords": 0.30,
     "person": 0.35,
     "visual": 0.45,
+    "tracker": 0.65,
+    "cert": 0.50,
+    "ip": 0.30,
+    "face": 0.40,
 }
 THRESHOLD = 0.6
 TEXT_MIN_JACCARD = 0.12
@@ -91,7 +106,60 @@ def pair_score(a: dict, b: dict, wa: set | None = None, wb: set | None = None) -
         if d <= DHASH_MAX_DISTANCE:
             score += WEIGHTS["visual"] * (1 - d / (2 * DHASH_MAX_DISTANCE))
             reasons.append(f"ten sam szablon graficzny (Hamming dHash {d}/64)")
+    s2, r2 = infra_score(a, b)
+    score += s2
+    reasons += r2
+    if not set(a.get("persons") or []) & set(b.get("persons") or []):
+        sim = same_face(a, b)
+        if sim:
+            score += WEIGHTS["face"]
+            reasons.append(f"ta sama twarz na grafikach (podobieństwo {sim:.2f})")
     return round(score, 3), reasons
+
+
+TRACKER_NAMES = {"meta_pixel": "piksel Meta", "google_tag": "Google Analytics", "google_ua": "Google Analytics",
+                 "google_tm": "Google Tag Manager", "google_ads": "Google Ads", "tiktok_pixel": "piksel TikTok",
+                 "yandex_metrika": "Yandex Metrika", "hotjar": "Hotjar"}
+
+
+def tracker_label(t: str) -> str:
+    kind, _, ident = t.partition(":")
+    return f"{TRACKER_NAMES.get(kind, kind)} {ident}"
+
+
+def infra_score(a: dict, b: dict) -> tuple[float, list[str]]:
+    ia, ib = a.get("infra") or {}, b.get("infra") or {}
+    if not ia or not ib:
+        return 0.0, []
+    score, reasons = 0.0, []
+    shared = sorted(set(ia.get("trackers") or []) & set(ib.get("trackers") or []))
+    if shared:
+        score += WEIGHTS["tracker"]
+        reasons.append("wspólny identyfikator śledzący: " + ", ".join(tracker_label(t) for t in shared[:3]))
+    da, db = a.get("domain"), b.get("domain")
+    if da and db and da != db:
+        sans_a, sans_b = ia.get("cert_sans") or [], ib.get("cert_sans") or []
+        same_cert = bool(ia.get("cert_sha256")) and ia.get("cert_sha256") == ib.get("cert_sha256")
+        san = da in sans_b or f"*.{da}" in sans_b or db in sans_a or f"*.{db}" in sans_a
+        if same_cert or san:
+            score += WEIGHTS["cert"]
+            reasons.append(f"ten sam certyfikat SSL ({ia['cert_sha256'][:12]}…)" if same_cert
+                           else "obie domeny na jednym certyfikacie SSL (SAN)")
+        if ia.get("ip") and ia.get("ip") == ib.get("ip"):
+            score += WEIGHTS["ip"]
+            net = f", {ia['net_name']}" if ia.get("net_name") else ""
+            reasons.append(f"ten sam serwer (IP {ia['ip']}{net})")
+    return score, reasons
+
+
+def same_face(a: dict, b: dict) -> float:
+    fa, fb = a.get("faces") or [], b.get("faces") or []
+    if not fa or not fb:
+        return 0.0
+    from .vision import FACE_MATCH_THRESHOLD, cosine
+    best = max((cosine(x["embedding"], y["embedding"]) for x in fa for y in fb
+                if x.get("embedding") and y.get("embedding")), default=0.0)
+    return round(best, 3) if best >= FACE_MATCH_THRESHOLD else 0.0
 
 
 def best_matches(target: dict, ads: list[dict], k: int = 5) -> list[dict]:
@@ -122,20 +190,55 @@ def _campaign_name(members: list[dict], persons: dict) -> str:
     return f"{name} ({who})" if who else name
 
 
+def campaign_structure(conn, ids: list[int]) -> tuple[list[list[int]], dict]:
+    """Podgrupy (Louvain) i mosty w grafie połączeń jednej kampanii."""
+    import networkx as nx
+    G = nx.Graph()
+    G.add_nodes_from(ids)
+    marks = ",".join("?" * len(ids))
+    q = f"SELECT ad_a, ad_b, score FROM similarity_edges WHERE ad_a IN ({marks}) AND ad_b IN ({marks})"
+    for r in conn.execute(q, (*ids, *ids)):
+        G.add_edge(r[0], r[1], weight=r[2])
+    subgroups: list[list[int]] = []
+    if len(ids) >= 4 and G.number_of_edges():
+        comms = nx.community.louvain_communities(G, weight="weight", seed=7)
+        if len(comms) > 1:
+            subgroups = sorted((sorted(c) for c in comms), key=lambda c: (-len(c), c[0]))
+    bridge_edges = []
+    for u, v in (list(nx.bridges(G)) if G.number_of_edges() else []):
+        H = G.copy()
+        H.remove_edge(u, v)
+        if min(len(nx.node_connected_component(H, u)), len(nx.node_connected_component(H, v))) >= 2:
+            bridge_edges.append({"a": min(u, v), "b": max(u, v), "score": round(G[u][v]["weight"], 3)})
+    # reklamy-mosty: po usunięciu reklamy kampania rozpada się na części (każda ≥ 2 reklamy)
+    bridge_ads = []
+    for n in (nx.articulation_points(G) if G.number_of_edges() else []):
+        H = G.copy()
+        H.remove_node(n)
+        parts = sorted((sorted(c) for c in nx.connected_components(H) if len(c) >= 2), key=len, reverse=True)
+        if len(parts) >= 2:
+            bridge_ads.append({"ad": n, "parts": parts})
+    bridge_ads.sort(key=lambda x: x["ad"])
+    return subgroups, {"edges": bridge_edges, "ads": bridge_ads}
+
+
 def refresh_campaign(conn, cid: int) -> None:
-    """Przelicza podsumowanie kampanii (nazwa, rozmiar, ryzyko, domeny, motywy, osoby)."""
+    """Przelicza podsumowanie kampanii (nazwa, rozmiar, ryzyko, domeny, motywy, osoby, podgrupy, mosty)."""
     members = _load_ads(conn, "WHERE cluster_id=?", (cid,))
     if not members:
         conn.execute("DELETE FROM campaigns WHERE id=?", (cid,))
         return
     persons = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM persons")}
+    subgroups, bridges = campaign_structure(conn, [a["id"] for a in members])
     conn.execute(
-        "INSERT OR REPLACE INTO campaigns VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO campaigns(id, name, size, max_risk, domains, themes, persons, first_seen, last_seen, "
+        "subgroups, bridges) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (cid, _campaign_name(members, persons), len(members), max(a["risk"] or 0 for a in members),
          json.dumps(sorted({a["domain"] for a in members if a["domain"]})),
          json.dumps(sorted({k.split(":")[0] for a in members for k in a["keywords"]})),
          json.dumps(sorted({p for a in members for p in a["persons"]})),
-         min(a["created_at"] for a in members), max(a["created_at"] for a in members)))
+         min(a["created_at"] for a in members), max(a["created_at"] for a in members),
+         json.dumps(subgroups), json.dumps(bridges)))
 
 
 def _merge(conn, target: int, others: set[int]) -> None:

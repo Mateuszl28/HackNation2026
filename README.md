@@ -80,6 +80,27 @@ Moduł `app/analyzer.py`:
 
 **Tryb offline demo:** wszystkie domeny w danych demo są fikcyjne (`*.example.pl`). Adresy z `*.example.pl`, `*.example`, `*.test`, `*.invalid` oraz z łańcuchów w danych demo są rozwiązywane lokalnie (symulowane przekierowania, tytuły, wiek domen), więc prezentacja działa bez internetu i bez błędów sieciowych. Prawdziwe adresy idą do sieci.
 
+### Analiza obrazu (`app/vision.py`)
+
+| Funkcja | Jak działa |
+|---|---|
+| **OCR zrzutów** | pierwszy dostępny silnik: Tesseract (`pol+eng`, jeśli zainstalowany) → **RapidOCR** (domyślny, Apache 2.0, bez instalacji programów) → EasyOCR. Z samego zrzutu wyciągany jest tekst reklamy, nazwiska, frazy oszustw i **adresy URL z grafiki** – z naprawą typowych błędów OCR (`zysk . example. pl`, `krypto-zysk24,example.pl`). Wyciągnięty adres przechodzi pełną analizę strony docelowej. |
+| **Rozpoznawanie twarzy** | wykrywanie **YuNet** (MIT) + wektory **SFace** (Apache 2.0, 128-d) przez wbudowane API OpenCV (`FaceDetectorYN`, `FaceRecognizerSF`); próg cosinus ≥ 0.363. Do osoby w bazie dodaje się zdjęcie referencyjne (zakładka Baza osób) – wszystkie reklamy są automatycznie dopasowywane ponownie. Twarze spoza bazy są porównywane między reklamami („ten sam aktor/wizerunek”). insightface celowo nie jest używany – jego modele mają licencję niekomercyjną. |
+
+Modele twarzy (~39 MB) nie są w repozytorium: `python tools/get_models.py` (aplikacja pobiera je też sama przy pierwszym użyciu).
+
+### Strona docelowa – ślady infrastruktury (`app/analyzer.py`)
+
+| Ślad | Źródło |
+|---|---|
+| identyfikatory śledzące | piksel Meta (`fbq init`), Google Analytics/Tag Manager/Ads, piksel TikTok, Yandex Metrika, Hotjar – wspólne ID = to samo konto reklamowe |
+| formularze wyłudzające | hasło, dane karty (`cc-number`, CVV), BLIK, dane bankowe/IBAN, PESEL, formularz „inwestora” (imię + nazwisko + telefon) |
+| TDS / cloaking | Keitaro, Binom, Palladium, parametry `clickid/subid` |
+| serwer | IP, sieć i CIDR (RDAP), **ASN** (RDAP / RIPEstat), nagłówki `Server` / `X-Powered-By` |
+| certyfikat SSL | odcisk SHA-256, wystawca, domeny z SAN (inne domeny na tym samym certyfikacie), certyfikat niepoprawny |
+
+W danych demo ślady są fikcyjne: IP z puli dokumentacyjnej RFC 5737, ASN z puli RFC 5398, zmyślone ID pikseli.
+
 ### Łączenie w kampanie
 
 Moduł `app/clustering.py` – punktacja wspólnych cech każdej pary reklam:
@@ -93,6 +114,10 @@ Moduł `app/clustering.py` – punktacja wspólnych cech każdej pary reklam:
 | hasła oszustw (Jaccard zbiorów haseł) | 0.30 × J |
 | osoba z bazy referencyjnej | 0.35 |
 | szablon graficzny – Hamming dHash ≤ 6 | 0.45 × (1 − d/12) |
+| **identyfikator śledzący** (piksel Meta, GA/GTM, TikTok, Metrika) | **0.65** – sam wystarcza |
+| ten sam certyfikat SSL / obie domeny na jednym certyfikacie (SAN) | 0.50 |
+| ten sam adres IP serwera (różne domeny) | 0.30 |
+| ta sama twarz na grafikach (osoba spoza bazy) | 0.40 |
 
 Wynik **> 0.6** → zapis krawędzi z listą powodów (`similarity_edges`) i ta sama kampania. Żaden pojedynczy ślad (np. sama wspólna domena pośrednia = 0.40) nie wystarcza – liczy się kombinacja.
 
@@ -102,6 +127,10 @@ Wynik **> 0.6** → zapis krawędzi z listą powodów (`similarity_edges`) i ta 
 - krawędzie do kilku kampanii → kampanie są **scalane** w najstarszą; obserwujący scalonej kampanii są przenoszeni, alert informuje o scaleniu.
 
 `POST /api/rebuild` przelicza wszystko od zera (union-find) – daje identyczny wynik jak przyrostowe przypisanie; przydatne po zmianie wag lub progu.
+
+**Struktura kampanii (graf połączeń, `networkx`):** kampania to spójna składowa grafu – reklama A łączy się z B (wspólna osoba + tekst), B z C (wspólna domena + szablon), więc A, B i C tworzą jedną kampanię, choć A i C nie mają wspólnych cech. Wewnątrz kampanii liczone są:
+- **podgrupy metodą Louvain** (modularność ważona wynikami połączeń) – „wątki” jednej operacji,
+- **mosty** – pojedyncze połączenia i **reklamy-mosty** (punkty artykulacji), bez których kampania rozpada się na części; UI ostrzega, że takie scalenie warto zweryfikować (np. reklama łącząca „cud na stawy” z „dopłatą do prądu”).
 
 Na danych demo: wszystkie reklamy w obrębie każdej kampanii są połączone (bezpośrednio lub przez inne reklamy), a najwyższy wynik między różnymi kampaniami to 0.40 (sama wspólna domena pośrednia), więc nie ma fałszywych połączeń.
 

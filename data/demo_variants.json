@@ -1,14 +1,5 @@
 [
-  {"id": "lib-101", "url": "https://skroc.example.pl/zz-inv2",
-   "text": "Minister Nowicki potwierdza: platforma inwestycyjna Marka Zielińskiego daje pasywny dochód. Zarejestruj się dziś, depozyt 250 zł, zanim usuną ten wywiad!",
-   "redirect_chain": ["https://skroc.example.pl/zz-inv2", "https://trk-route.example.pl/r?c=91", "https://pasywny-dochod.example.pl/news"],
-   "title": "Wpadka na wizji! Minister Nowicki ujawnia", "domain_age_days": 3},
-  {"id": "lib-102", "url": "https://flex-artro.example.pl/promo",
-   "text": "Dr Kowalczyk: lekarze są w szoku, stawy zdrowe w 7 dni! Naturalny sposób bez recepty. Tylko dziś ostatnie sztuki.",
-   "redirect_chain": ["https://flex-artro.example.pl/promo"],
-   "title": "Przełomowa metoda na stawy", "domain_age_days": 22},
-  {"id": "lib-103", "url": "https://l.facebook.com/l.php?u=qq",
-   "text": "Anna Wiśniewska w telewizji ujawniła sekret: kryptowaluty i pasywny dochód. Banki są wściekłe. Wpłać 250 zł.",
-   "redirect_chain": ["https://l.facebook.com/l.php?u=qq", "https://trk-route.example.pl/r?c=95", "https://krypto-zysk24.example.pl/start2"],
-   "title": "Banki są wściekłe – sekret Zielińskiego", "domain_age_days": 10}
+  {"id": "lib-101", "url": "https://skroc.example.pl/zz-inv2", "text": "Minister Nowicki potwierdza: platforma inwestycyjna Marka Zielińskiego daje pasywny dochód. Zarejestruj się dziś, depozyt 250 zł, zanim usuną ten wywiad!", "redirect_chain": ["https://skroc.example.pl/zz-inv2", "https://trk-route.example.pl/r?c=91", "https://pasywny-dochod.example.pl/news"], "title": "Wpadka na wizji! Minister Nowicki ujawnia", "domain_age_days": 3, "infra": {"trackers": ["meta_pixel:900000000000001"], "forms": ["lead"], "tds": [], "ip": "203.0.113.12", "asn": "AS64500", "net_name": "DEMO-HOSTING-NET", "net_country": "XX", "cert_sha256": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3", "cert_issuer": "Demo CA", "server": "nginx"}},
+  {"id": "lib-102", "url": "https://flex-artro.example.pl/promo", "text": "Dr Kowalczyk: lekarze są w szoku, stawy zdrowe w 7 dni! Naturalny sposób bez recepty. Tylko dziś ostatnie sztuki.", "redirect_chain": ["https://flex-artro.example.pl/promo"], "title": "Przełomowa metoda na stawy", "domain_age_days": 22, "infra": {"trackers": ["google_tm:GTM-DEMO01", "tiktok_pixel:CDEMO00000000000001"], "forms": ["karta"], "tds": [], "ip": "198.51.100.20", "asn": "AS64501", "net_name": "DEMO-CLOUD-NET", "net_country": "XX", "cert_sha256": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1", "cert_issuer": "Demo CA", "cert_sans": ["zdrowe-stawy.example.pl", "flex-artro.example.pl"], "server": "Apache"}},
+  {"id": "lib-103", "url": "https://l.facebook.com/l.php?u=qq", "text": "Anna Wiśniewska w telewizji ujawniła sekret: kryptowaluty i pasywny dochód. Banki są wściekłe. Wpłać 250 zł.", "redirect_chain": ["https://l.facebook.com/l.php?u=qq", "https://trk-route.example.pl/r?c=95", "https://krypto-zysk24.example.pl/start2"], "title": "Banki są wściekłe – sekret Zielińskiego", "domain_age_days": 10, "infra": {"trackers": ["meta_pixel:900000000000001"], "forms": ["lead"], "tds": ["keitaro"], "ip": "203.0.113.10", "asn": "AS64500", "net_name": "DEMO-HOSTING-NET", "net_country": "XX", "cert_sha256": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2", "cert_issuer": "Demo CA", "server": "nginx"}}
 ]
