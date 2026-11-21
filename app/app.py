@@ -25,7 +25,7 @@ from .analyzer import PLATFORM_DOMAINS, registrable_domain
 from .clustering import THRESHOLD
 from .db import DATA_DIR, DEMO_VARIANTS, FEED_PATH, connect, init_db, load_json, now, reset_demo, row_to_dict
 
-STATIC = Path(__file__).resolve().parent.parent / "static"
+WEB = Path(__file__).resolve().parent.parent / "web"  # frontend + PWA
 DEFAULT_INTERVAL_S = 30
 
 
@@ -73,7 +73,8 @@ async def submit(url: str = Form(None), text: str = Form(None), file: UploadFile
 @app.post("/share")
 async def share_target(title: str = Form(None), text: str = Form(None), url: str = Form(None),
                        files: list[UploadFile] = File(None)):
-    """Web Share Target z PWA: 'Udostępnij -> FejkRadar' na telefonie."""
+    """Fallback Share Target – gdy service worker nie przechwycił udostępnienia (normalnie robi to web/sw.js
+    i przekazuje treść do zakładki Złap fejk). Tu analizujemy od razu i pokazujemy raport."""
     img = files[0] if files else None
     data = await img.read() if img else None
     if not (url or text or title or data):
@@ -327,19 +328,22 @@ async def demo_reset():
 
 # =========================================================== frontend (PWA)
 app.mount("/uploads", StaticFiles(directory=DATA_DIR / "uploads"), name="uploads")
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.mount("/web", StaticFiles(directory=WEB), name="web")
 
 
 @app.get("/", include_in_schema=False)
 def index():
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(WEB / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
 def manifest():
-    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+    return FileResponse(WEB / "manifest.webmanifest", media_type="application/manifest+json",
+                        headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/sw.js", include_in_schema=False)
 def sw():
-    return FileResponse(STATIC / "sw.js", media_type="application/javascript")
+    # z katalogu głównego => zasięg "/" (cała aplikacja + /share); no-cache => szybkie aktualizacje SW
+    return FileResponse(WEB / "sw.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})

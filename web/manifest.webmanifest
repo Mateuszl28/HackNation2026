@@ -1,0 +1,39 @@
+{
+  "id": "/",
+  "name": "FejkRadar – wykrywanie fałszywych reklam",
+  "short_name": "FejkRadar",
+  "description": "Zgłaszaj podejrzane reklamy, sprawdzaj, czy należą do znanej kampanii, i dostawaj alerty o nowych wariantach.",
+  "lang": "pl",
+  "dir": "ltr",
+  "start_url": "/?source=pwa#submit",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#0f1115",
+  "theme_color": "#d33a2c",
+  "categories": ["security", "utilities", "news"],
+  "icons": [
+    {"src": "/web/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/web/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/web/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+    {"src": "/web/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}
+  ],
+  "shortcuts": [
+    {"name": "Złap fejk", "short_name": "Zgłoś", "url": "/?source=shortcut#submit",
+     "icons": [{"src": "/web/icons/icon-192.png", "sizes": "192x192"}]},
+    {"name": "Alerty", "url": "/?source=shortcut#alerts",
+     "icons": [{"src": "/web/icons/icon-192.png", "sizes": "192x192"}]}
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [{"name": "files", "accept": ["image/*", ".png", ".jpg", ".jpeg", ".webp"]}]
+    }
+  }
+}

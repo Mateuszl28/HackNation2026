@@ -4,9 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FejkRadar</title>
+<meta name="description" content="Zgłaszaj podejrzane reklamy i sprawdzaj, czy należą do znanej kampanii oszustów.">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" href="/static/icon.svg">
+<link rel="icon" href="/web/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/web/icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="/web/icons/apple-touch-icon.png">
 <meta name="theme-color" content="#d33a2c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="FejkRadar">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
 <style>
   :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#9aa3b2; --accent:#d33a2c; --ok:#3aa76d; --warn:#e0a43a; }
@@ -39,6 +46,11 @@
   .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:middle; }
   img.shot { max-width:100%; max-height:260px; border-radius:8px; border:1px solid var(--line); }
   code { word-break:break-all; }
+  #installBtn { margin:0 0 0 auto; padding:6px 12px; }
+  .banner { background:#1d2a3d; border:1px solid #2f4a6e; color:#cfe2ff; border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:14px; }
+  .banner.warn { background:#3d2a14; border-color:#6e4a2f; color:#ffe0b3; }
+  #preview { display:block; margin-top:8px; } #preview[hidden], .banner[hidden] { display:none; }
+  @media (max-width: 600px) { header h1 { font-size:16px; } nav button { padding:5px 7px; font-size:14px; } main { padding:12px; } }
 </style>
 </head>
 <body>
@@ -52,20 +64,24 @@
     <button data-tab="scheduler">Scheduler</button>
     <button data-tab="alerts">Alerty<span id="badge" hidden>0</span></button>
   </nav>
+  <button class="btn" id="installBtn" hidden>📲 Zainstaluj</button>
 </header>
 <main>
+  <div id="offlineBanner" class="banner warn" hidden>Brak połączenia z serwerem – pokazuję zapisaną wersję aplikacji.</div>
   <section id="submit" class="active">
     <div class="row">
       <form id="form" class="card">
+        <div id="shareBanner" class="banner" hidden></div>
         <b>Zgłoś podejrzaną reklamę</b>
         <label>Link do reklamy / strony docelowej</label>
         <input name="url" type="url" placeholder="https://...">
         <label>Tekst reklamy, nazwa produktu lub hasło</label>
         <textarea name="text" placeholder="np. „Lekarze są w szoku! Naturalny sposób na stawy w 7 dni”"></textarea>
         <label>Zrzut ekranu / zdjęcie reklamy</label>
-        <input name="file" type="file" accept="image/*" capture="environment">
+        <input name="file" type="file" accept="image/*">
+        <img id="preview" class="shot" hidden alt="podgląd zrzutu">
         <button class="btn" type="submit">Analizuj</button>
-        <p class="muted small">Na telefonie zainstaluj aplikację („Dodaj do ekranu głównego”), a potem udostępniaj reklamy prosto z Facebooka/przeglądarki → FejkRadar.</p>
+        <p class="muted small" id="installTip">Na telefonie zainstaluj aplikację, a potem udostępniaj reklamy prosto z Facebooka/przeglądarki: <b>Udostępnij → FejkRadar</b>.</p>
       </form>
       <div id="report"><div class="card muted">Tu pojawi się szybki raport.</div></div>
     </div>
@@ -133,7 +149,16 @@
 <script>
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const api = async (path, opts = {}) => { const r = await fetch(path, opts); if (!r.ok) throw new Error(await r.text()); return r.json(); };
+let serverDown = false;
+const api = async (path, opts = {}) => {
+  let r;
+  try { r = await fetch(path, opts); } catch (e) { serverDown = true; updateOnline(); throw e; }
+  // 503 {offline:true} zwraca sw.js, gdy serwer jest niedostępny
+  serverDown = r.status === 503 && (r.headers.get("content-type") || "").includes("json");
+  updateOnline();
+  if (!r.ok) throw new Error(serverDown ? "Brak połączenia z serwerem FejkRadar" : await r.text());
+  return r.json();
+};
 const json = (body, method = "POST") => ({ method, headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });
 const riskTag = (r) => `<span class="risk ${r >= .6 ? "r-hi" : r >= .3 ? "r-mid" : "r-lo"}">ryzyko ${Math.round((r || 0) * 100)}%</span>`;
 const PALETTE = ["#d33a2c","#e0a43a","#3aa76d","#2bb3c0","#e2558f","#8bc34a","#ff7043","#c0ca33","#26a69a","#f06292"];
@@ -301,8 +326,13 @@ async function pollAlerts() {
       if (notified.has(a.id)) continue; notified.add(a.id);
       if ("Notification" in window && Notification.permission === "granted") {
         const reg = await navigator.serviceWorker?.getRegistration();
-        const opts = {body: "Kliknij, aby zobaczyć nowy wariant", icon: "/static/icon.svg", data: {url: `/#ad/${a.ad_id}`}};
-        reg ? reg.showNotification(a.message, opts) : new Notification(a.message, opts);
+        const opts = {
+          body: `${a.campaign_name || "Obserwowana kampania"}${a.ad_domain ? ` · ${a.ad_domain}` : ""}\nKliknij, aby zobaczyć nowy wariant`,
+          icon: "/web/icons/icon-192.png", badge: "/web/icons/badge-96.png",
+          tag: `alert-${a.id}`, data: {url: `/#ad/${a.ad_id}`},
+        };
+        if (reg) reg.showNotification(a.message, opts);
+        else { const n = new Notification(a.message, opts); n.onclick = () => { window.focus(); location.hash = `ad/${a.ad_id}`; }; }
       }
     }
   } catch {}
@@ -310,11 +340,86 @@ async function pollAlerts() {
 setInterval(pollAlerts, 8000);
 api("/api/alerts?unseen=true").then(al => al.forEach(a => notified.add(a.id))).finally(pollAlerts);
 
+// ---------- PWA: podgląd zrzutu ----------
+function showPreview(file) {
+  const img = $("#preview");
+  if (!file) { img.hidden = true; img.removeAttribute("src"); return; }
+  img.src = URL.createObjectURL(file); img.hidden = false;
+}
+$("#form").file.addEventListener("change", e => showPreview(e.target.files[0]));
+$("#form").addEventListener("reset", () => { showPreview(null); $("#shareBanner").hidden = true; });
+
+// ---------- PWA: Android Share Target („Udostępnij → FejkRadar”) ----------
+// sw.js przechwytuje POST /share, odkłada treść do Cache Storage i przekierowuje tu z ?shared=1
+async function receiveShare() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has("shared")) return;
+  history.replaceState(null, "", "/#submit");
+  show("submit");
+  const banner = $("#shareBanner");
+  if (params.get("shared") === "error" || !("caches" in window)) {
+    banner.textContent = "Nie udało się odebrać udostępnionej treści – wklej link lub dodaj zrzut ręcznie."; banner.hidden = false; return;
+  }
+  const cache = await caches.open("fejkradar-share");
+  const metaRes = await cache.match("/__share/meta");
+  if (!metaRes) return;
+  const meta = await metaRes.json();
+  const f = $("#form");
+  let {title = "", text = "", url = ""} = meta;
+  // Android często wkłada link do pola "text" (np. „Zobacz to! https://…”) – wyciągamy go do pola URL
+  if (!url) {
+    const m = `${text} ${title}`.match(/https?:\/\/[^\s"'<>]+/);
+    if (m) { url = m[0]; text = text.replace(m[0], "").trim(); title = title.replace(m[0], "").trim(); }
+  }
+  f.url.value = url;
+  f.text.value = [title, text].filter(s => s && s !== url).join("\n");
+  const dt = new DataTransfer();
+  for (const fi of meta.files || []) {
+    const r = await cache.match(fi.key);
+    if (r) dt.items.add(new File([await r.blob()], fi.name, {type: fi.type || "image/jpeg"}));
+    await cache.delete(fi.key);
+  }
+  await cache.delete("/__share/meta");
+  if (dt.files.length) { f.file.files = dt.files; showPreview(dt.files[0]); }
+  const what = [url && "link", f.text.value && "tekst", dt.files.length && "obraz"].filter(Boolean).join(", ");
+  banner.textContent = `📥 Odebrano udostępnioną treść (${what || "pusta"}) – analizuję…`; banner.hidden = false;
+  if (what) f.requestSubmit();
+}
+
+// ---------- PWA: instalacja na ekranie głównym ----------
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installPrompt = e; $("#installBtn").hidden = false; });
+$("#installBtn").addEventListener("click", async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; $("#installBtn").hidden = true;
+});
+window.addEventListener("appinstalled", () => { $("#installBtn").hidden = true; });
+const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+if (standalone) $("#installTip").innerHTML = "Udostępniaj reklamy z innych aplikacji: <b>Udostępnij → FejkRadar</b>.";
+else if (/iPhone|iPad/.test(navigator.userAgent))
+  $("#installTip").innerHTML = "iPhone: <b>Udostępnij → Do ekranu początkowego</b>, aby zainstalować. (Udostępnianie do aplikacji działa na Androidzie.)";
+
+// ---------- PWA: offline / service worker ----------
+function updateOnline() { const b = document.getElementById("offlineBanner"); if (b) b.hidden = navigator.onLine && !serverDown; }
+window.addEventListener("online", updateOnline); window.addEventListener("offline", updateOnline); updateOnline();
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js", {scope: "/"}).catch(e => console.warn("SW:", e));
+  // kliknięcie w powiadomienie systemowe -> sw.js prosi otwarte okno o przejście do alertu
+  navigator.serviceWorker.addEventListener("message", e => {
+    if (e.data?.type === "open") { const h = new URL(e.data.url).hash; if (location.hash === h) route(); else location.hash = h; }
+  });
+}
+
 // ---------- start ----------
-function route() { const m = location.hash.match(/^#ad\/(\d+)/); if (m) openAd(m[1]); }
+const TABS = ["submit", "campaigns", "graph", "persons", "scheduler", "alerts"];
+function route() {
+  const m = location.hash.match(/^#ad\/(\d+)/);
+  if (m) return openAd(m[1]);
+  const tab = location.hash.slice(1);
+  if (TABS.includes(tab)) show(tab);
+}
 window.addEventListener("hashchange", route);
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
-loadRecent(); route();
+loadRecent(); route(); receiveShare();
 </script>
 </body>
 </html>

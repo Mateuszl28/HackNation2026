@@ -30,7 +30,18 @@ Otwórz http://localhost:8000. Przy starcie baza zasiewa się 7 fikcyjnymi rekla
 
 Opcjonalnie OCR zrzutów ekranu: zainstaluj [Tesseract](https://github.com/tesseract-ocr/tesseract) z językiem `pol` oraz `pip install pytesseract`. Bez niego analiza zrzutów korzysta z tekstu wpisanego ręcznie i hasha wizualnego.
 
-Na telefonie (PWA, Share Target i powiadomienia wymagają HTTPS): wystaw serwer np. przez tunel (`cloudflared tunnel --url http://localhost:8000`), otwórz adres w Chrome na Androidzie → „Dodaj do ekranu głównego”.
+### Aplikacja mobilna (PWA) – `web/manifest.webmanifest`, `web/sw.js`
+
+Na telefonie PWA wymaga HTTPS (wyjątek: `localhost`). Najprościej tunel: `cloudflared tunnel --url http://localhost:8000`, potem adres w Chrome na Androidzie.
+
+| Funkcja | Jak działa |
+|---|---|
+| Instalacja na ekranie głównym | przycisk **📲 Zainstaluj** w nagłówku (lub menu Chrome → *Zainstaluj aplikację*); ikony PNG 192/512 + maskowalna, skróty *Złap fejk* i *Alerty* po przytrzymaniu ikony; na iPhonie: *Udostępnij → Do ekranu początkowego* |
+| **Udostępnij → FejkRadar** (Android Share Target) | `sw.js` przechwytuje `POST /share`, odkłada link/tekst/obraz do Cache Storage i otwiera zakładkę **Złap fejk**: formularz wypełnia się sam (link wyciągany także z pola tekstu, podgląd zrzutu) i analiza startuje automatycznie. Bez aktywnego SW serwer analizuje od razu (fallback). |
+| Powiadomienia systemowe | o nowym wariancie obserwowanej kampanii (nazwa kampanii + domena); kliknięcie przełącza otwarte okno aplikacji na nową reklamę albo otwiera nowe okno. `sw.js` ma też gotową obsługę Web Push (`push`). |
+| Offline | szkielet aplikacji (strona, ikony, Cytoscape.js) w cache – aplikacja otwiera się bez serwera i pokazuje ostrzeżenie; API zawsze z sieci |
+
+Ikony generuje `python tools/make_icons.py`.
 
 ## Scenariusz demo
 
