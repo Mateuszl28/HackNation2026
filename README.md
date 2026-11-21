@@ -99,6 +99,8 @@ Modele twarzy (~39 MB) nie są w repozytorium: `python tools/get_models.py` (apl
 | serwer | IP, sieć i CIDR (RDAP), **ASN** (RDAP / RIPEstat), nagłówki `Server` / `X-Powered-By` |
 | certyfikat SSL | odcisk SHA-256, wystawca, domeny z SAN (inne domeny na tym samym certyfikacie), certyfikat niepoprawny |
 
+Ślady zapisywane są w kolumnie `ads.infra` (JSON); ta sama zawartość jest dostępna jako `ads.page_signals_json` (kolumna wyliczana SQLite, nigdy NULL).
+
 W danych demo ślady są fikcyjne: IP z puli dokumentacyjnej RFC 5737, ASN z puli RFC 5398, zmyślone ID pikseli.
 
 ### Łączenie w kampanie
@@ -118,6 +120,7 @@ Moduł `app/clustering.py` – punktacja wspólnych cech każdej pary reklam:
 | ten sam certyfikat SSL / obie domeny na jednym certyfikacie (SAN) | 0.50 |
 | ten sam adres IP serwera (różne domeny) | 0.30 |
 | ta sama twarz na grafikach (osoba spoza bazy) | 0.40 |
+| identyczny zestaw formularzy wyłudzających (karta, BLIK, bank, hasło, „inwestor”) | 0.15 – tylko wspiera inne ślady |
 
 Wynik **> 0.6** → zapis krawędzi z listą powodów (`similarity_edges`) i ta sama kampania. Żaden pojedynczy ślad (np. sama wspólna domena pośrednia = 0.40) nie wystarcza – liczy się kombinacja.
 

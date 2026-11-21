@@ -50,7 +50,9 @@ CREATE TABLE IF NOT EXISTS ads (
     ocr_text TEXT,                  -- tekst odczytany ze zrzutu
     ocr_backend TEXT,
     faces TEXT,                     -- json: [{box, score, embedding, person_id?, similarity?}]
-    infra TEXT                      -- json: trackers, tds, forms, ip, asn, net_name, cert_sha256, cert_sans, server...
+    infra TEXT,                     -- json: trackers, tds, forms, ip, asn, net_name, cert_sha256, cert_sans, server...
+    -- ślady strony docelowej pod nazwą z planu – kolumna wyliczana (alias `infra`, nigdy NULL, bez kopii danych)
+    page_signals_json TEXT GENERATED ALWAYS AS (COALESCE(infra, '{}')) VIRTUAL
 );
 CREATE TABLE IF NOT EXISTS ad_features (
     ad_id INTEGER NOT NULL,
@@ -128,7 +130,7 @@ CREATE TABLE IF NOT EXISTS scan_log (
 );
 """
 
-JSON_FIELDS = {"redirect_chain", "keywords", "persons", "risk_reasons", "aliases", "reasons", "domains", "themes",
+JSON_FIELDS = {"page_signals_json", "redirect_chain", "keywords", "persons", "risk_reasons", "aliases", "reasons", "domains", "themes",
                "faces", "infra", "subgroups", "bridges", "embedding"}
 # kolumny dodane w kolejnych wersjach – migracja istniejących baz bez utraty danych
 MIGRATIONS = {"ads": {"page_text": "TEXT", "ocr_text": "TEXT", "ocr_backend": "TEXT", "faces": "TEXT", "infra": "TEXT"},
@@ -165,6 +167,9 @@ def init_db() -> None:
             for col, typ in cols.items():
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        if "page_signals_json" not in {r[1] for r in conn.execute("PRAGMA table_xinfo(ads)")}:
+            conn.execute("ALTER TABLE ads ADD COLUMN page_signals_json TEXT "
+                         "GENERATED ALWAYS AS (COALESCE(infra, '{}')) VIRTUAL")
         try:  # unikalna nazwa osoby; na starej bazie z duplikatami indeks się nie utworzy – zostaje kontrola w API
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_persons_name ON persons(name COLLATE NOCASE)")
         except sqlite3.IntegrityError:

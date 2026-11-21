@@ -12,6 +12,7 @@ Każda para reklam dostaje punkty za wspólne cechy:
     wspólny identyfikator śledzący (piksel Meta, GA/GTM, TikTok, Metrika) ... 0.65  – sam wystarcza do połączenia
     ten sam certyfikat SSL / domena na certyfikacie drugiej (SAN) ......... 0.50
     ten sam adres IP serwera (przy różnych domenach) ...................... 0.30
+    identyczny zestaw formularzy wyłudzających dane (karta, BLIK, hasło…) .. 0.15  – tylko wspiera inne ślady
   ta sama twarz na grafikach (SFace, cosinus ≥ 0.363), gdy osoba nie jest w bazie ... 0.40
 
 Wynik > 0.6 => krawędź z listą powodów (similarity_edges) i ta sama kampania.
@@ -46,6 +47,7 @@ WEIGHTS = {
     "cert": 0.50,
     "ip": 0.30,
     "face": 0.40,
+    "forms": 0.15,
 }
 THRESHOLD = 0.6
 TEXT_MIN_JACCARD = 0.12
@@ -136,6 +138,13 @@ def infra_score(a: dict, b: dict) -> tuple[float, list[str]]:
     if shared:
         score += WEIGHTS["tracker"]
         reasons.append("wspólny identyfikator śledzący: " + ", ".join(tracker_label(t) for t in shared[:3]))
+    # ten sam „profil” wyłudzenia: identyczny, niepusty zestaw wrażliwych formularzy. Słaby sygnał – dwie różne
+    # strony phishingowe też mogą prosić o kartę – więc samodzielnie nigdy nie przekracza progu.
+    fa, fb = set(ia.get("forms") or []), set(ib.get("forms") or [])
+    if fa and fa == fb:
+        from .analyzer import FORM_NAMES
+        score += WEIGHTS["forms"]
+        reasons.append("ten sam formularz wyłudzający: " + ", ".join(FORM_NAMES.get(f, f) for f in sorted(fa)))
     da, db = a.get("domain"), b.get("domain")
     if da and db and da != db:
         sans_a, sans_b = ia.get("cert_sans") or [], ib.get("cert_sans") or []
