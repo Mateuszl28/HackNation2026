@@ -3,7 +3,7 @@ import math
 import re
 from collections import Counter
 
-from .extract import PLATFORM_DOMAINS, normalize, registrable_domain
+from .analyzer import PLATFORM_DOMAINS, normalize, registrable_domain
 
 WEIGHTS = {
     "same_domain": 0.55,

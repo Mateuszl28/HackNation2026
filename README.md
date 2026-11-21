@@ -44,13 +44,19 @@ Reset danych demo: przycisk **Reset demo** w zakładce Scheduler (lub `POST /api
 
 ## Potok analizy
 
+Moduł `app/analyzer.py`:
+
 | Etap | Sygnały |
 |---|---|
 | Wejście | URL, tekst/hasło/nazwa produktu, zrzut ekranu (aparat, plik, udostępnienie) |
-| Tekst | OCR (Tesseract, opcjonalnie), leksykon haseł oszustw (inwestycje, cud medyczny, presja czasu, fałszywy news, rejestracja/depozyt) |
-| Technika | łańcuch przekierowań z mobilnym User-Agentem (HTTP + meta-refresh/JS), domena docelowa, wiek domeny (RDAP), podejrzane TLD, tytuł/opis strony |
-| Wizualne | perceptual hash (dHash) – ten sam szablon/grafika mimo skalowania i kompresji |
-| Osoby | dopasowanie do bazy referencyjnej (imię, nazwisko, aliasy) |
+| Przekierowania | każdy hop osobno (HTTP 3xx, meta-refresh, JS) z User-Agentem smartfona (Android Chrome); równoległy przebieg z UA desktopowym wykrywa **cloaking** (telefon i komputer lądują na innych domenach) |
+| Wiek domeny | RDAP z serwera rejestru wskazanego przez IANA bootstrap (`rdap.dns.pl` dla .pl, `rdap.verisign.com` dla .com…), fallback `rdap.org`, cache w pamięci |
+| Hasła | 5 grup: inwestycje, cudowne leki, presja czasu, fałszywe newsy, wpłata/depozyt; dopasowanie odporne na brak polskich znaków i obfuskację (`z@r4biaj` → `zarabiaj`) |
+| Tekst ze zrzutu | OCR (Tesseract, opcjonalnie) |
+| Wizualne | dHash (`imagehash` + Pillow), odporny na przeskalowanie i kompresję |
+| Osoby | tabela `persons`: imię i nazwisko + aliasy, z tolerancją odmiany (Wiśniewska → Wiśniewskiej, Kowalczyk → Kowalczyka) |
+
+**Tryb offline demo:** wszystkie domeny w danych demo są fikcyjne (`*.example.pl`). Adresy z `*.example.pl`, `*.example`, `*.test`, `*.invalid` oraz z łańcuchów w danych demo są rozwiązywane lokalnie (symulowane przekierowania, tytuły, wiek domen), więc prezentacja działa bez internetu i bez błędów sieciowych. Prawdziwe adresy idą do sieci.
 
 ### Łączenie w kampanie
 

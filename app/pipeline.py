@@ -5,14 +5,14 @@ from collections import Counter
 
 from . import similarity
 from .db import DATA_DIR, SEED_ADS, connect, load_json, now, row_to_dict
-from .extract import (analyze_url, dhash, domain_age_days, extract_keywords, find_urls, match_persons,
-                      ocr_image, registrable_domain, risk_score)
+from .analyzer import (analyze_url, dhash, domain_age_days, extract_keywords, find_urls, match_persons_detailed,
+                       ocr_image, registrable_domain, risk_score)
 
 UPLOADS = DATA_DIR / "uploads"
 UPLOADS.mkdir(exist_ok=True)
 
 THEME_NAMES = {"inwestycja": "Fałszywe inwestycje", "cud_medyczny": "Cudowny lek", "falszywy_news": "Fałszywy news",
-               "pilnosc": "Presja czasu", "rejestracja": "Wyłudzenie danych/wpłaty"}
+               "pilnosc": "Presja czasu", "wplata": "Wyłudzenie danych/wpłaty"}
 
 
 def all_ads(conn=None) -> list[dict]:
@@ -75,20 +75,21 @@ async def analyze(*, source: str, url: str | None = None, text: str | None = Non
         page = await analyze_url(url)
 
     domain = registrable_domain(page["final_url"] or url or "")
-    age = prefetched.get("domain_age_days")
+    age = prefetched.get("domain_age_days", page.get("domain_age_days"))
     if age is None and domain and "redirect_chain" not in prefetched:
         age = await domain_age_days(domain)
 
     full_text = " ".join(filter(None, [text, page.get("title"), page.get("description"), page.get("page_text")]))
+    person_hits = match_persons_detailed(full_text, all_persons())
     ad = {
         "created_at": now(), "source": source, "external_id": external_id, "input_url": url,
         "final_url": page["final_url"], "domain": domain, "redirect_chain": page["redirect_chain"],
         "title": page.get("title"), "description": page.get("description"),
         "text": (text or page.get("page_text") or "")[:5000], "keywords": extract_keywords(full_text),
-        "persons": match_persons(full_text, all_persons()), "phash": phash, "image_path": image_path,
+        "persons": [m["id"] for m in person_hits], "phash": phash, "image_path": image_path,
         "domain_age_days": age,
     }
-    ad["risk"], ad["risk_reasons"] = risk_score(ad)
+    ad["risk"], ad["risk_reasons"] = risk_score(ad, page, [f"{m['name']} („{m['matched']}”)" for m in person_hits])
     if page.get("error"):
         ad["risk_reasons"].append(f"nie udało się pobrać strony: {page['error'][:120]}")
 

@@ -1,10 +1,10 @@
 [
-  {"id": "lib-201", "url": "https://tauron-doplata-pl.cfd/wniosek",
+  {"id": "lib-201", "url": "https://energia-doplata.example.pl/wniosek",
    "text": "Rząd ukrywa dopłatę do prądu! Minister Nowicki: każde gospodarstwo dostanie 1000 zł zwrotu. Wypełnij formularz i podaj dane konta, zanim usuną ten artykuł.",
-   "redirect_chain": ["https://tauron-doplata-pl.cfd/wniosek"],
+   "redirect_chain": ["https://energia-doplata.example.pl/wniosek"],
    "title": "Dopłata do prądu 2026 – sprawdź czy Ci przysługuje", "domain_age_days": 5},
-  {"id": "lib-202", "url": "https://bit.ly/doplata-pr",
+  {"id": "lib-202", "url": "https://skroc.example.pl/doplata-pr",
    "text": "Minister Nowicki potwierdził: zwrot 1000 zł za prąd. Wypełnij formularz już dziś, ograniczona liczba wniosków!",
-   "redirect_chain": ["https://bit.ly/doplata-pr", "https://cdn-go.sbs/d", "https://tauron-doplata-pl.cfd/wniosek2"],
+   "redirect_chain": ["https://skroc.example.pl/doplata-pr", "https://cdn-go.example.pl/d", "https://energia-doplata.example.pl/wniosek2"],
    "title": "Dopłata do prądu 2026 – sprawdź czy Ci przysługuje", "domain_age_days": 5}
 ]

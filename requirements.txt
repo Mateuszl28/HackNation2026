@@ -4,3 +4,4 @@ python-multipart>=0.0.9
 httpx>=0.27
 pillow>=10.4
 # opcjonalnie (OCR): pip install pytesseract + zainstalowany Tesseract z jezykiem pol
+imagehash>=4.3
