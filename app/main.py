@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import pipeline, scheduler, similarity
+from . import clustering, pipeline, scheduler
 from .db import DATA_DIR, DEMO_VARIANTS, FEED_PATH, connect, init_db, load_json, now, reset_demo, row_to_dict
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -80,7 +80,7 @@ def graph():
                 nodes.append({"id": f"p{pid}", "type": "person", "label": persons[pid]["name"]})
                 links.append({"source": f"ad{a['id']}", "target": f"p{pid}", "type": "wizerunek"})
         for hop in set(filter(None, (pipeline.registrable_domain(u) for u in a["redirect_chain"][:-1]))):
-            if hop != a["domain"] and hop not in similarity.PLATFORM_DOMAINS:
+            if hop != a["domain"] and hop not in clustering.PLATFORM_DOMAINS:
                 nodes.append({"id": f"d:{hop}", "type": "domain", "label": hop})
                 links.append({"source": f"ad{a['id']}", "target": f"d:{hop}", "type": "przekierowanie"})
     for e in edges:
@@ -99,6 +99,13 @@ def clusters():
         ads = [r[0] for r in conn.execute("SELECT id FROM ads WHERE cluster_id=? ORDER BY id", (c["id"],))]
         out.append({**c, "cluster_id": c["id"], "ads": ads, "keywords": c["themes"], "watched": c["id"] in watched})
     return out
+
+
+@app.post("/api/rebuild")
+def rebuild():
+    """Pełne przeliczenie krawędzi i kampanii (np. po zmianie wag lub progu)."""
+    pipeline.rebuild()
+    return {"ok": True, "campaigns": connect().execute("SELECT COUNT(*) FROM campaigns").fetchone()[0]}
 
 
 @app.get("/api/edges/{ad_id}")

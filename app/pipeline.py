@@ -1,18 +1,14 @@
-"""Potok analizy: wejście -> ekstrakcja sygnałów -> zapis (reklama + cechy) -> klastrowanie (krawędzie + kampanie) -> alerty."""
+"""Potok analizy: wejście -> ekstrakcja sygnałów -> zapis (reklama + cechy) -> przypisanie do kampanii -> alerty."""
 import json
 import uuid
-from collections import Counter
 
-from . import similarity
+from . import clustering
+from .analyzer import (PLATFORM_DOMAINS, analyze_url, dhash, domain_age_days, extract_keywords, find_urls,
+                       match_persons_detailed, ocr_image, registrable_domain, risk_score)
 from .db import DATA_DIR, SEED_ADS, connect, load_json, now, row_to_dict
-from .analyzer import (analyze_url, dhash, domain_age_days, extract_keywords, find_urls, match_persons_detailed,
-                       ocr_image, registrable_domain, risk_score)
 
 UPLOADS = DATA_DIR / "uploads"
 UPLOADS.mkdir(exist_ok=True)
-
-THEME_NAMES = {"inwestycja": "Fałszywe inwestycje", "cud_medyczny": "Cudowny lek", "falszywy_news": "Fałszywy news",
-               "pilnosc": "Presja czasu", "wplata": "Wyłudzenie danych/wpłaty"}
 
 
 def all_ads(conn=None) -> list[dict]:
@@ -31,7 +27,7 @@ def _features(ad: dict) -> list[tuple[str, str]]:
         f.append(("domain", ad["domain"]))
     for u in (ad.get("redirect_chain") or [])[:-1]:
         d = registrable_domain(u)
-        if d and d != ad.get("domain") and d not in similarity.PLATFORM_DOMAINS:
+        if d and d != ad.get("domain") and d not in PLATFORM_DOMAINS:
             f.append(("redirect_hop", d))
     for k in ad.get("keywords") or []:
         f.append(("keyword", k))
@@ -45,8 +41,8 @@ def _features(ad: dict) -> list[tuple[str, str]]:
 
 
 async def analyze(*, source: str, url: str | None = None, text: str | None = None, image: bytes | None = None,
-                  image_name: str | None = None, prefetched: dict | None = None, external_id: str | None = None,
-                  recluster: bool = True) -> dict:
+                  image_name: str | None = None, prefetched: dict | None = None,
+                  external_id: str | None = None) -> dict:
     """prefetched: dane z biblioteki reklam (redirect_chain, title, domain_age_days...) – pomija pobieranie z sieci."""
     prefetched = prefetched or {}
     text = text or ""
@@ -99,9 +95,15 @@ async def analyze(*, source: str, url: str | None = None, text: str | None = Non
         ad_id = conn.execute(f"INSERT INTO ads({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", vals).lastrowid
         conn.executemany("INSERT OR IGNORE INTO ad_features VALUES (?,?,?)",
                          [(ad_id, k, v) for k, v in _features(ad)])
-    if recluster:
-        recluster_and_alert(new_ad_ids=[ad_id])
-    return report(ad_id) if recluster else {"ad": {"id": ad_id}}
+        result = clustering.assign_ad(conn, ad_id)
+        # alert dla obserwujących kampanię, do której dołączył nowy wariant
+        if not result["created"] and conn.execute("SELECT 1 FROM campaign_watches WHERE campaign_id=?",
+                                                  (result["campaign_id"],)).fetchone():
+            merged = f", scalono z kampaniami {result['merged']}" if result["merged"] else ""
+            conn.execute("INSERT INTO alerts(created_at, ad_id, campaign_id, message) VALUES (?,?,?,?)",
+                         (now(), ad_id, result["campaign_id"],
+                          f"Nowy wariant w obserwowanej kampanii #{result['campaign_id']} (reklama #{ad_id}{merged})"))
+    return report(ad_id)
 
 
 async def seed_ads() -> int:
@@ -112,61 +114,13 @@ async def seed_ads() -> int:
     for it in items:
         prefetched = {k: it[k] for k in ("redirect_chain", "title", "description", "domain_age_days", "phash") if k in it}
         await analyze(source="seed", url=it.get("url"), text=it.get("text"), prefetched=prefetched,
-                      external_id=it.get("id"), recluster=False)
-    recluster_and_alert()
+                      external_id=it.get("id"))
     return len(items)
 
 
-def _campaign_name(members: list[dict], persons: dict) -> str:
-    themes = Counter(k.split(":")[0] for a in members for k in a["keywords"])
-    # motywy konkretne (co jest obiecywane) mają pierwszeństwo przed ogólnymi (presja czasu, wpłata)
-    tier = {"inwestycja": 0, "cud_medyczny": 0, "falszywy_news": 1}
-    ranked = sorted(themes, key=lambda t: (tier.get(t, 2), -themes[t]))
-    main = [THEME_NAMES.get(t, t) for t in ranked[:2]]
-    people = Counter(p for a in members for p in a["persons"])
-    who = persons.get(people.most_common(1)[0][0], {}).get("name") if people else None
-    name = " + ".join(main) if main else "Bez wyraźnego motywu"
-    return f"{name} ({who})" if who else name
-
-
-def recluster_and_alert(new_ad_ids: list[int] | None = None) -> None:
+def rebuild() -> None:
     with connect() as conn:
-        ads = all_ads(conn)
-        edges, clusters = similarity.compute(ads)
-        conn.executemany("UPDATE ads SET cluster_id=? WHERE id=?", [(c, a) for a, c in clusters.items()])
-
-        conn.execute("DELETE FROM similarity_edges")
-        conn.executemany("INSERT INTO similarity_edges VALUES (?,?,?,?)",
-                         [(e["source"], e["target"], e["score"], json.dumps(e["reasons"], ensure_ascii=False))
-                          for e in edges])
-
-        persons = {p["id"]: p for p in all_persons(conn)}
-        groups: dict[int, list[dict]] = {}
-        for a in ads:
-            groups.setdefault(clusters[a["id"]], []).append(a)
-        conn.execute("DELETE FROM campaigns")
-        for cid, members in groups.items():
-            conn.execute(
-                "INSERT INTO campaigns VALUES (?,?,?,?,?,?,?,?,?)",
-                (cid, _campaign_name(members, persons), len(members), max(a["risk"] or 0 for a in members),
-                 json.dumps(sorted({a["domain"] for a in members if a["domain"]})),
-                 json.dumps(sorted({k.split(":")[0] for a in members for k in a["keywords"]})),
-                 json.dumps(sorted({p for a in members for p in a["persons"]})),
-                 min(a["created_at"] for a in members), max(a["created_at"] for a in members)))
-
-        # obserwowane kampanie: id kampanii to id reklamy, więc po scaleniu klastrów watch "podąża" za nią
-        for w in conn.execute("SELECT campaign_id FROM campaign_watches").fetchall():
-            old = w["campaign_id"]
-            cur = clusters.get(old)
-            if cur is None:
-                continue
-            if cur != old:
-                conn.execute("UPDATE OR IGNORE campaign_watches SET campaign_id=? WHERE campaign_id=?", (cur, old))
-            for nid in new_ad_ids or []:
-                if nid != cur and clusters.get(nid) == cur:
-                    conn.execute(
-                        "INSERT INTO alerts(created_at, ad_id, campaign_id, message) VALUES (?,?,?,?)",
-                        (now(), nid, cur, f"Nowy wariant w obserwowanej kampanii #{cur} (reklama #{nid})"))
+        clustering.rebuild(conn)
 
 
 def edges_for(ad_id: int, conn=None) -> list[dict]:
@@ -188,7 +142,7 @@ def report(ad_id: int) -> dict:
         "persons": [pmap[p] for p in ad["persons"] if p in pmap],
         "campaign": {"cluster_id": ad["cluster_id"], "name": camp.get("name"), "size": len(members),
                      "members": members, "known": len(members) > 1},
-        "matches": similarity.best_matches(ad, all_ads(conn)),
+        "matches": clustering.best_matches(ad, all_ads(conn)),
         "watched": bool(conn.execute("SELECT 1 FROM campaign_watches WHERE campaign_id=?",
                                      (ad["cluster_id"],)).fetchone()),
     }

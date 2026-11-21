@@ -60,19 +60,28 @@ Moduł `app/analyzer.py`:
 
 ### Łączenie w kampanie
 
-Ważone podobieństwo wielocechowe dla każdej pary materiałów (`app/similarity.py`):
+Moduł `app/clustering.py` – punktacja wspólnych cech każdej pary reklam:
 
-| Sygnał | Waga |
+| Wspólna cecha | Punkty |
 |---|---|
-| ta sama domena docelowa | 0.55 |
-| wspólna domena pośrednia w przekierowaniach | 0.40 |
-| identyczny tytuł strony docelowej | 0.30 |
-| podobieństwo narracji (cosinus n-gramów znakowych) | 0.60 × sim |
-| wspólne hasła z leksykonu (Jaccard) | 0.30 × J |
-| ten sam wizerunek osoby | 0.35 |
-| podobny szablon graficzny (dHash ≤ 10 bitów) | 0.45 × (1 − d/16) |
+| domena docelowa | 0.55 |
+| domeny w łańcuchu przekierowań (bez platform i skracaczy) | 0.40 |
+| tytuł strony (`page_title`) | 0.30 |
+| podobieństwo tekstu – Jaccard na słowach ≥ 3 znaki (od J ≥ 0.12) | 0.90 × J |
+| hasła oszustw (Jaccard zbiorów haseł) | 0.30 × J |
+| osoba z bazy referencyjnej | 0.35 |
+| szablon graficzny – Hamming dHash ≤ 6 | 0.45 × (1 − d/12) |
 
-Para o sumie ≥ **0.6** dostaje krawędź; kampanie to spójne składowe tego grafu (union-find). Żaden pojedynczy ślad nie musi dowodzić oszustwa – liczy się kombinacja. Każda krawędź przechowuje listę powodów, więc wynik jest wyjaśnialny.
+Wynik **> 0.6** → zapis krawędzi z listą powodów (`similarity_edges`) i ta sama kampania. Żaden pojedynczy ślad (np. sama wspólna domena pośrednia = 0.40) nie wystarcza – liczy się kombinacja.
+
+**Przypisanie przyrostowe** (`assign_ad`): nowa reklama jest porównywana ze wszystkimi dotychczasowymi.
+- brak krawędzi → **nowa kampania**,
+- krawędzie do jednej kampanii → **dołącza** do niej,
+- krawędzie do kilku kampanii → kampanie są **scalane** w najstarszą; obserwujący scalonej kampanii są przenoszeni, alert informuje o scaleniu.
+
+`POST /api/rebuild` przelicza wszystko od zera (union-find) – daje identyczny wynik jak przyrostowe przypisanie; przydatne po zmianie wag lub progu.
+
+Na danych demo: wszystkie reklamy w obrębie każdej kampanii są połączone (bezpośrednio lub przez inne reklamy), a najwyższy wynik między różnymi kampaniami to 0.40 (sama wspólna domena pośrednia), więc nie ma fałszywych połączeń.
 
 ## API (skrót)
 
@@ -81,6 +90,7 @@ Para o sumie ≥ **0.6** dostaje krawędź; kampanie to spójne składowe tego g
 - `GET /api/ads`, `GET /api/ads/{id}`
 - `GET /api/clusters`, `GET /api/graph`
 - `GET /api/edges/{ad_id}` – krawędzie podobieństwa z powodami
+- `POST /api/rebuild` – pełne przeliczenie kampanii
 - `POST|DELETE /api/campaigns/{id}/watch`, `GET /api/alerts`
 - `GET|POST /api/persons`, `DELETE /api/persons/{id}`
 - `GET|POST /api/sources`, `POST /api/sources/{id}/run`, `POST /api/sources/{id}/toggle`
