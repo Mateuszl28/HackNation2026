@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 CREATE TABLE IF NOT EXISTS persons (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
+    name TEXT NOT NULL,             -- unikalne (bez względu na wielkość liter): indeks niżej + kontrola w app.py
     role TEXT,
     aliases TEXT                    -- json list
 );
@@ -165,6 +165,10 @@ def init_db() -> None:
             for col, typ in cols.items():
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        try:  # unikalna nazwa osoby; na starej bazie z duplikatami indeks się nie utworzy – zostaje kontrola w API
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_persons_name ON persons(name COLLATE NOCASE)")
+        except sqlite3.IntegrityError:
+            print("[db] uwaga: w bazie są osoby o powtórzonych nazwach – indeks unikalności pominięty")
         if conn.execute("SELECT COUNT(*) FROM persons").fetchone()[0] == 0:
             for p in load_json(DATA_DIR / "persons_seed.json"):
                 conn.execute("INSERT INTO persons(name, role, aliases) VALUES (?,?,?)",

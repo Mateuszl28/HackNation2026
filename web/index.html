@@ -450,8 +450,14 @@ async function delFace(pid, fid) { await api(`/api/persons/${pid}/faces/${fid}`,
 async function delPerson(id) { await api(`/api/persons/${id}`, {method: "DELETE"}); loadPersons(); }
 $("#personForm").addEventListener("submit", async e => {
   e.preventDefault(); const f = new FormData(e.target);
-  await api("/api/persons", json({name: f.get("name"), role: f.get("role"), aliases: f.get("aliases").split(",").map(s => s.trim()).filter(Boolean)}));
-  e.target.reset(); loadPersons();
+  try {
+    const r = await api("/api/persons", json({name: f.get("name"), role: f.get("role"), aliases: f.get("aliases").split(",").map(s => s.trim()).filter(Boolean)}));
+    $("#capInfo").textContent = `Dodano osobę${r.rematched_ads ? ` – rozpoznana w ${r.rematched_ads} istniejących reklamach` : ""}.`;
+    e.target.reset(); loadPersons();
+  } catch (err) {
+    let msg = err.message; try { msg = JSON.parse(msg).detail; } catch {}
+    $("#capInfo").textContent = "⚠️ " + (typeof msg === "string" ? msg : "Nieprawidłowe dane osoby");
+  }
 });
 
 // ---------- scheduler ----------

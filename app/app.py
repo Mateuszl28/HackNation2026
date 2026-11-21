@@ -12,6 +12,7 @@ Sekcje API:
 """
 import asyncio
 import json
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -315,19 +316,41 @@ def del_person_face(pid: int, fid: int):
 
 @app.post("/api/persons", status_code=201)
 def add_person(p: PersonIn):
+    name = _clean_name(p.name)
     with connect() as conn:
-        pid = conn.execute("INSERT INTO persons(name, role, aliases) VALUES (?,?,?)",
-                           (p.name.strip(), p.role, json.dumps(p.aliases, ensure_ascii=False))).lastrowid
+        _ensure_name_free(conn, name)
+        try:
+            pid = conn.execute("INSERT INTO persons(name, role, aliases) VALUES (?,?,?)",
+                               (name, p.role, json.dumps(p.aliases, ensure_ascii=False))).lastrowid
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, f"Osoba „{name}” już jest w bazie")
     return {"ok": True, "id": pid, "rematched_ads": pipeline.rematch_persons()}
 
 
 @app.put("/api/persons/{pid}")
 def update_person(pid: int, p: PersonIn):
     _get_or_404("SELECT * FROM persons WHERE id=?", (pid,), f"osoba #{pid}")
+    name = _clean_name(p.name)
     with connect() as conn:
-        conn.execute("UPDATE persons SET name=?, role=?, aliases=? WHERE id=?",
-                     (p.name.strip(), p.role, json.dumps(p.aliases, ensure_ascii=False), pid))
+        _ensure_name_free(conn, name, exclude_id=pid)
+        try:
+            conn.execute("UPDATE persons SET name=?, role=?, aliases=? WHERE id=?",
+                         (name, p.role, json.dumps(p.aliases, ensure_ascii=False), pid))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, f"Osoba „{name}” już jest w bazie")
     return {"ok": True, "rematched_ads": pipeline.rematch_persons()}
+
+
+def _clean_name(name: str) -> str:
+    return " ".join(name.split())
+
+
+def _ensure_name_free(conn, name: str, exclude_id: int | None = None) -> None:
+    """Unikalność nazwy bez względu na wielkość liter – także dla polskich znaków (SQLite NOCASE zna tylko ASCII)."""
+    key = name.casefold()
+    for pid, other in conn.execute("SELECT id, name FROM persons"):
+        if pid != exclude_id and " ".join(other.split()).casefold() == key:
+            raise HTTPException(409, f"Osoba „{other}” już jest w bazie (#{pid})")
 
 
 @app.delete("/api/persons/{pid}")
