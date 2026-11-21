@@ -14,7 +14,19 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Otwórz http://localhost:8000. Przy starcie scheduler automatycznie skanuje przykładową bibliotekę reklam (`data/ad_library_feed.json`) i buduje klastry.
+Otwórz http://localhost:8000. Przy starcie baza zasiewa się 7 fikcyjnymi reklamami (`data/seed_ads.json`: kampania inwestycyjna, „cud na stawy” i jedna reklama osobna), a scheduler skanuje fikcyjną bibliotekę reklam (`data/seed_feed.json` kopiowany do `data/ad_library_feed.json`).
+
+### Baza danych (`app/db.py`, SQLite)
+
+| Tabela | Zawartość |
+|---|---|
+| `ads` | materiały: URL, domena, przekierowania, tekst, ryzyko i powody, przypisana kampania |
+| `ad_features` | wyekstrahowane cechy (domena, hop przekierowania, hasło, motyw, osoba, hash, tytuł) |
+| `similarity_edges` | pary powyżej progu z wynikiem i **jawnymi powodami** |
+| `campaigns` | klastry: nazwa, rozmiar, ryzyko, domeny, motywy, osoby |
+| `campaign_watches`, `alerts` | obserwowane kampanie i powiadomienia o nowych wariantach |
+| `persons` | baza referencyjna osób (rola, aliasy) |
+| `sources`, `seen_items`, `scan_log` | scheduler: źródła, przetworzone pozycje, dziennik |
 
 Opcjonalnie OCR zrzutów ekranu: zainstaluj [Tesseract](https://github.com/tesseract-ocr/tesseract) z językiem `pol` oraz `pip install pytesseract`. Bez niego analiza zrzutów korzysta z tekstu wpisanego ręcznie i hasha wizualnego.
 
@@ -28,7 +40,7 @@ Na telefonie (PWA, Share Target i powiadomienia wymagają HTTPS): wystaw serwer 
 4. **Alerty** / powiadomienie systemowe: nowy wariant w obserwowanej kampanii.
 5. **Graf** – reklamy, domeny, domeny pośredniczące w przekierowaniach i osoby; kliknięcie krawędzi pokazuje, dlaczego materiały zostały połączone.
 
-Reset danych demo: usuń `data/fejkradar.db` i przywróć `data/ad_library_feed.json` (`git checkout data/ad_library_feed.json`).
+Reset danych demo: przycisk **Reset demo** w zakładce Scheduler (lub `POST /api/demo/reset`).
 
 ## Potok analizy
 
@@ -62,10 +74,11 @@ Para o sumie ≥ **0.6** dostaje krawędź; kampanie to spójne składowe tego g
 - `POST /share` – Web Share Target z PWA
 - `GET /api/ads`, `GET /api/ads/{id}`
 - `GET /api/clusters`, `GET /api/graph`
-- `POST|DELETE /api/watch/{ad_id}`, `GET /api/alerts`
+- `GET /api/edges/{ad_id}` – krawędzie podobieństwa z powodami
+- `POST|DELETE /api/campaigns/{id}/watch`, `GET /api/alerts`
 - `GET|POST /api/persons`, `DELETE /api/persons/{id}`
 - `GET|POST /api/sources`, `POST /api/sources/{id}/run`, `POST /api/sources/{id}/toggle`
-- `POST /api/demo/inject`
+- `POST /api/demo/inject`, `POST /api/demo/reset`
 
 Źródło schedulera to feed JSON (plik lub URL) – lista obiektów `{id, url, text, [redirect_chain, title, domain_age_days]}`. W ten sposób podpina się eksport z bibliotek reklam (np. Meta Ad Library API).
 

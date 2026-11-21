@@ -112,6 +112,7 @@
         <b>Demo</b>
         <p class="muted small">Dopisuje do biblioteki reklam nowy wariant znanej kampanii. Scheduler wyłapie go przy kolejnym skanie i – jeśli kampania jest obserwowana – wyśle alert.</p>
         <button class="btn" id="inject">Wstrzyknij nowy wariant</button>
+        <button class="btn ghost" id="reset">Reset demo</button>
         <div id="injectMsg" class="small muted"></div>
       </div>
     </div>
@@ -153,7 +154,7 @@ function renderReport(rep) {
       <b>Reklama #${a.id}</b> ${riskTag(a.risk)}
     </div>
     <p>${c.known
-      ? `⚠️ <b>Pasuje do znanej kampanii #${c.cluster_id}</b> (${c.size} materiałów)`
+      ? `⚠️ <b>Pasuje do znanej kampanii #${c.cluster_id}: ${esc(c.name)}</b> (${c.size} materiałów)`
       : `Nowy materiał – brak dopasowania do znanych kampanii`}</p>
     ${a.image_path ? `<img class="shot" src="/${esc(a.image_path)}">` : ""}
     <ul class="reasons">${a.risk_reasons.map(r => `<li>${esc(r)}</li>`).join("") || "<li class='muted'>brak sygnałów ryzyka</li>"}</ul>
@@ -164,15 +165,15 @@ function renderReport(rep) {
     <div>${a.keywords.map(k => `<span class="tag">${esc(k)}</span>`).join("")}</div>
     ${rep.matches.length ? `<p class="small"><b>Najbliższe materiały:</b></p><ul class="reasons small">${rep.matches.map(m =>
       `<li><a href="#ad/${m.ad_id}">#${m.ad_id}</a> – ${m.score.toFixed(2)}: ${esc(m.reasons.join("; "))}</li>`).join("")}</ul>` : ""}
-    <button class="btn ${rep.watched ? "ghost" : ""}" onclick="toggleWatch(${a.id}, ${rep.watched})">
+    <button class="btn ${rep.watched ? "ghost" : ""}" onclick="toggleWatch(${c.cluster_id}, ${rep.watched}, ${a.id})">
       ${rep.watched ? "✓ Obserwujesz tę kampanię (kliknij, by przestać)" : "🔔 Obserwuj tę kampanię"}</button>
   </div>`;
 }
 async function openAd(id) { show("submit"); renderReport(await api(`/api/ads/${id}`)); }
-async function toggleWatch(id, watched) {
-  await api(`/api/watch/${id}`, {method: watched ? "DELETE" : "POST"});
-  openAd(id);
+async function toggleWatch(cid, watched, adId) {
+  await api(`/api/campaigns/${cid}/watch`, {method: watched ? "DELETE" : "POST"});
   if (!watched) askNotif();
+  adId ? openAd(adId) : loadClusters();
 }
 $("#form").addEventListener("submit", async e => {
   e.preventDefault();
@@ -192,9 +193,10 @@ async function loadClusters() {
   const cs = await api("/api/clusters");
   $("#clusterList").innerHTML = cs.map(c => `<div class="card">
     <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-      <b><span class="dot" style="background:${clusterColor(c.cluster_id)}"></span>Kampania #${c.cluster_id} – ${c.ads.length} materiałów ${c.watched ? "🔔" : ""}</b>
+      <b><span class="dot" style="background:${clusterColor(c.cluster_id)}"></span>Kampania #${c.cluster_id}: ${esc(c.name)} – ${c.ads.length} mat. ${c.watched ? "🔔" : ""}</b>
       ${riskTag(c.max_risk)}
     </div>
+    <button class="btn ghost" style="margin:4px 0" onclick="toggleWatch(${c.cluster_id}, ${c.watched})">${c.watched ? "Przestań obserwować" : "🔔 Obserwuj"}</button>
     <div class="small"><b>Domeny:</b> ${c.domains.map(esc).join(", ") || "—"}</div>
     <div>${c.keywords.map(k => `<span class="tag">${esc(k)}</span>`).join("")}</div>
     <div class="small">Materiały: ${c.ads.map(id => `<a href="#ad/${id}">#${id}</a>`).join(" ")}</div>
@@ -264,12 +266,17 @@ $("#inject").addEventListener("click", async () => {
   const r = await api("/api/demo/inject", {method: "POST"});
   $("#injectMsg").textContent = r.ok ? `Dodano ${r.injected} do biblioteki. Poczekaj na skan lub kliknij „skanuj”.` : r.message;
 });
+$("#reset").addEventListener("click", async () => {
+  const r = await api("/api/demo/reset", {method: "POST"});
+  notified.clear();
+  $("#injectMsg").textContent = `Zresetowano – zasiano ${r.seeded} reklam demo.`; loadSources();
+});
 
 // ---------- alerty / powiadomienia ----------
 async function loadAlerts() {
   const al = await api("/api/alerts");
   $("#alertList").innerHTML = al.map(a => `<div class="card">${a.seen ? "" : "🆕 "}<b>${esc(a.message)}</b>
-    <div class="small muted">${fmt(a.created_at)} · obserwowana reklama #${a.watched_ad_id} · <a href="#ad/${a.ad_id}">zobacz nowy wariant</a></div></div>`).join("")
+    <div class="small muted">${fmt(a.created_at)} · kampania #${a.campaign_id} · <a href="#ad/${a.ad_id}">zobacz nowy wariant</a></div></div>`).join("")
     || `<div class="card muted">Brak alertów. Obserwuj kampanię w raporcie zgłoszenia.</div>`;
 }
 $("#seenBtn").addEventListener("click", async () => { await api("/api/alerts/seen", {method: "POST"}); notified.clear(); pollAlerts(); loadAlerts(); });

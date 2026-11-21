@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import pipeline, scheduler, similarity
-from .db import DATA_DIR, connect, init_db, now, row_to_dict
+from .db import DATA_DIR, DEMO_VARIANTS, FEED_PATH, connect, init_db, load_json, now, reset_demo, row_to_dict
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 
@@ -18,6 +18,7 @@ STATIC = Path(__file__).resolve().parent.parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    await pipeline.seed_ads()
     task = asyncio.create_task(scheduler.loop())
     yield
     task.cancel()
@@ -63,13 +64,14 @@ def get_ad(ad_id: int):
 # ---------- kampanie / graf ----------
 @app.get("/api/graph")
 def graph():
-    ads = pipeline.all_ads()
-    persons = {p["id"]: p for p in pipeline.all_persons()}
-    edges, clusters = similarity.compute(ads)
+    conn = connect()
+    ads = pipeline.all_ads(conn)
+    persons = {p["id"]: p for p in pipeline.all_persons(conn)}
+    edges = [row_to_dict(r) for r in conn.execute("SELECT * FROM similarity_edges")]
     nodes, links = [], []
     for a in ads:
         nodes.append({"id": f"ad{a['id']}", "type": "ad", "label": f"#{a['id']} {(a['title'] or a['text'] or '')[:30]}",
-                      "cluster": clusters[a["id"]], "risk": a["risk"]})
+                      "cluster": a["cluster_id"], "risk": a["risk"]})
         if a["domain"]:
             nodes.append({"id": f"d:{a['domain']}", "type": "domain", "label": a["domain"]})
             links.append({"source": f"ad{a['id']}", "target": f"d:{a['domain']}", "type": "domena"})
@@ -82,7 +84,7 @@ def graph():
                 nodes.append({"id": f"d:{hop}", "type": "domain", "label": hop})
                 links.append({"source": f"ad{a['id']}", "target": f"d:{hop}", "type": "przekierowanie"})
     for e in edges:
-        links.append({"source": f"ad{e['source']}", "target": f"ad{e['target']}", "type": "podobieństwo",
+        links.append({"source": f"ad{e['ad_a']}", "target": f"ad{e['ad_b']}", "type": "podobieństwo",
                       "score": e["score"], "reasons": e["reasons"]})
     uniq = {n["id"]: n for n in nodes}
     return {"nodes": list(uniq.values()), "links": links}
@@ -90,34 +92,32 @@ def graph():
 
 @app.get("/api/clusters")
 def clusters():
-    ads = pipeline.all_ads()
-    watched = {r["ad_id"] for r in connect().execute("SELECT ad_id FROM watches")}
-    out = {}
-    for a in ads:
-        c = out.setdefault(a["cluster_id"], {"cluster_id": a["cluster_id"], "ads": [], "domains": set(),
-                                             "keywords": set(), "max_risk": 0, "watched": False})
-        c["ads"].append(a["id"])
-        if a["domain"]:
-            c["domains"].add(a["domain"])
-        c["keywords"].update(k.split(":")[0] for k in a["keywords"])
-        c["max_risk"] = max(c["max_risk"], a["risk"] or 0)
-        c["watched"] |= a["id"] in watched
-    res = [{**c, "domains": sorted(c["domains"]), "keywords": sorted(c["keywords"])} for c in out.values()]
-    return sorted(res, key=lambda c: (-len(c["ads"]), -c["max_risk"]))
+    conn = connect()
+    watched = {r[0] for r in conn.execute("SELECT campaign_id FROM campaign_watches")}
+    out = []
+    for c in map(row_to_dict, conn.execute("SELECT * FROM campaigns ORDER BY size DESC, max_risk DESC")):
+        ads = [r[0] for r in conn.execute("SELECT id FROM ads WHERE cluster_id=? ORDER BY id", (c["id"],))]
+        out.append({**c, "cluster_id": c["id"], "ads": ads, "keywords": c["themes"], "watched": c["id"] in watched})
+    return out
 
 
-# ---------- obserwowanie i alerty ----------
-@app.post("/api/watch/{ad_id}")
-def watch(ad_id: int):
+@app.get("/api/edges/{ad_id}")
+def edges(ad_id: int):
+    return pipeline.edges_for(ad_id)
+
+
+# ---------- obserwowanie kampanii i alerty ----------
+@app.post("/api/campaigns/{cid}/watch")
+def watch(cid: int):
     with connect() as conn:
-        conn.execute("INSERT OR IGNORE INTO watches VALUES (?,?)", (ad_id, now()))
+        conn.execute("INSERT OR IGNORE INTO campaign_watches VALUES (?,?)", (cid, now()))
     return {"ok": True}
 
 
-@app.delete("/api/watch/{ad_id}")
-def unwatch(ad_id: int):
+@app.delete("/api/campaigns/{cid}/watch")
+def unwatch(cid: int):
     with connect() as conn:
-        conn.execute("DELETE FROM watches WHERE ad_id=?", (ad_id,))
+        conn.execute("DELETE FROM campaign_watches WHERE campaign_id=?", (cid,))
     return {"ok": True}
 
 
@@ -201,17 +201,23 @@ async def run_source(sid: int):
 @app.post("/api/demo/inject")
 def demo_inject():
     """Demo: dopisuje do feedu nowy wariant istniejącej kampanii – scheduler go wyłapie i wyśle alert."""
-    feed_path = DATA_DIR / "ad_library_feed.json"
-    variants = json.loads((DATA_DIR / "demo_variants.json").read_text(encoding="utf-8"))
-    feed = json.loads(feed_path.read_text(encoding="utf-8"))
+    feed = load_json(FEED_PATH)
     existing = {i.get("id") for i in feed}
-    pending = [v for v in variants if v["id"] not in existing]
+    pending = [v for v in load_json(DEMO_VARIANTS) if v["id"] not in existing]
     if not pending:
         return {"ok": False, "message": "Wszystkie warianty demo już wstrzyknięte"}
     item = random.choice(pending)
     feed.append(item)
-    feed_path.write_text(json.dumps(feed, ensure_ascii=False, indent=2), encoding="utf-8")
+    FEED_PATH.write_text(json.dumps(feed, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"ok": True, "injected": item["id"]}
+
+
+@app.post("/api/demo/reset")
+async def demo_reset():
+    """Przywraca stan początkowy: 7 reklam demo, pusty dziennik, feed bez wstrzykniętych wariantów."""
+    reset_demo()
+    n = await pipeline.seed_ads()
+    return {"ok": True, "seeded": n}
 
 
 # ---------- frontend (PWA) ----------

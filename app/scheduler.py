@@ -41,7 +41,7 @@ async def run_source(src: dict) -> dict:
             prefetched = {k: it[k] for k in ("redirect_chain", "title", "description", "domain_age_days", "phash")
                           if k in it}
             await pipeline.analyze(source=f"scheduler:{src['id']}", url=it.get("url"), text=it.get("text"),
-                                   prefetched=prefetched)
+                                   prefetched=prefetched, external_id=it.get("id"))
             new += 1
         status = f"ok: {found} pozycji, {new} nowych"
     except Exception as e:

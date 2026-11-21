@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 data/fejkradar.db
 data/uploads/
+data/ad_library_feed.json
