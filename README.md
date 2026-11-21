@@ -48,7 +48,7 @@ Na telefonie PWA wymaga HTTPS (wyjątek: `localhost`). Najprościej tunel: `clou
 | Funkcja | Jak działa |
 |---|---|
 | Instalacja na ekranie głównym | przycisk **📲 Zainstaluj** w nagłówku (lub menu Chrome → *Zainstaluj aplikację*); ikony PNG 192/512 + maskowalna, skróty *Złap fejk* i *Alerty* po przytrzymaniu ikony; na iPhonie: *Udostępnij → Do ekranu początkowego* |
-| **Udostępnij → FejkRadar** (Android Share Target) | `sw.js` przechwytuje `POST /share`, odkłada link/tekst/obraz do Cache Storage i otwiera zakładkę **Złap fejk**: formularz wypełnia się sam (link wyciągany także z pola tekstu, podgląd zrzutu) i analiza startuje automatycznie. Bez aktywnego SW serwer analizuje od razu (fallback). |
+| **Udostępnij → FejkRadar** (Android Share Target) | `sw.js` przechwytuje `POST /share-target` (oraz starszy `/share`), odkłada link/tekst/obraz do Cache Storage i otwiera zakładkę **Złap fejk**: formularz wypełnia się sam (link wyciągany także z pola tekstu, podgląd zrzutu) i analiza startuje automatycznie. Bez aktywnego SW serwer analizuje od razu (fallback). |
 | Powiadomienia systemowe | o nowym wariancie obserwowanej kampanii (nazwa kampanii + domena); kliknięcie przełącza otwarte okno aplikacji na nową reklamę albo otwiera nowe okno. `sw.js` ma też gotową obsługę Web Push (`push`). |
 | Offline | szkielet aplikacji (strona, ikony, Cytoscape.js) w cache – aplikacja otwiera się bez serwera i pokazuje ostrzeżenie; API zawsze z sieci |
 
@@ -143,7 +143,7 @@ Pełna, interaktywna dokumentacja: http://localhost:8000/docs
 
 | Obszar | Endpointy |
 |---|---|
-| Analiza | `POST /api/submit` (multipart: `url`, `text`, `file`) → szybki raport · `POST /share` (Web Share Target z PWA) · `GET /api/ads` · `GET /api/ads/{id}` (raport + krawędzie z powodami) |
+| Analiza | `POST /api/submit` (multipart: `url`, `text`, `file`) → szybki raport · `POST /share-target` (Web Share Target z PWA – fallback bez service workera) · `GET /api/ads` · `GET /api/ads/{id}` (raport + krawędzie z powodami) |
 | Kampanie i graf | `GET /api/campaigns` · `GET /api/graph[?campaign=ID&min_size=N]` – gotowe `elements` dla Cytoscape.js (węzły: reklamy, domeny, osoby; krawędzie: domena, przekierowanie, wizerunek, podobieństwo z wynikiem i powodami) · `GET /api/edges/{ad_id}` · `POST /api/rebuild` |
 | Osoby | `GET /api/persons` (z liczbą reklam) · `POST /api/persons` · `PUT /api/persons/{id}` · `DELETE /api/persons/{id}` – każda zmiana bazy uruchamia ponowne dopasowanie osób we wszystkich reklamach i przeliczenie kampanii |
 | Scheduler | `GET /api/scheduler` (źródła, czas do następnego skanu, dziennik) · `POST /api/sources` (domyślnie co **30 s**) · `POST /api/sources/{id}/run` · `POST /api/sources/{id}/toggle` |

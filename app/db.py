@@ -12,6 +12,7 @@ Tabele:
   sources, seen_items, scan_log – scheduler: źródła, przetworzone pozycje, dziennik skanów
 """
 import json
+import os
 import shutil
 import sqlite3
 import time
@@ -19,7 +20,8 @@ from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
-DB_PATH = DATA_DIR / "fejkradar.db"
+# FEJKRADAR_DB – inna baza (np. testy, druga instancja); domyślnie data/fejkradar.db
+DB_PATH = Path(os.environ.get("FEJKRADAR_DB") or DATA_DIR / "fejkradar.db")
 SEED_ADS = DATA_DIR / "seed_ads.json"            # 7 fikcyjnych reklam, zasiewane na starcie
 SEED_FEED = DATA_DIR / "seed_feed.json"          # początkowy stan fikcyjnej biblioteki reklam
 FEED_PATH = DATA_DIR / "ad_library_feed.json"    # feed czytany przez scheduler (runtime, poza gitem)

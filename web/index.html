@@ -588,7 +588,7 @@ $("#fileInput").addEventListener("change", e => showPreview(e.target.files[0]));
 $("#form").addEventListener("reset", () => { showPreview(null); $("#shareBanner").hidden = true; });
 
 // ---------- PWA: Android Share Target („Udostępnij → FejkRadar”) ----------
-// sw.js przechwytuje POST /share, odkłada treść do Cache Storage i przekierowuje tu z ?shared=1
+// sw.js przechwytuje POST /share-target, odkłada treść do Cache Storage i przekierowuje tu z ?shared=1
 async function receiveShare() {
   const params = new URLSearchParams(location.search);
   if (!params.has("shared")) return;

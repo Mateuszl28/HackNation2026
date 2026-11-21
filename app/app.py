@@ -80,7 +80,8 @@ async def submit(url: str = Form(None), text: str = Form(None), file: UploadFile
                                   image_name=file.filename if data else None)
 
 
-@app.post("/share")
+@app.post("/share-target")
+@app.post("/share", include_in_schema=False)  # starszy adres z poprzedniej wersji manifestu
 async def share_target(title: str = Form(None), text: str = Form(None), url: str = Form(None),
                        files: list[UploadFile] = File(None)):
     """Fallback Share Target – gdy service worker nie przechwycił udostępnienia (normalnie robi to web/sw.js

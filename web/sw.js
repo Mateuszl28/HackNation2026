@@ -1,12 +1,14 @@
 /* FejkRadar – service worker PWA
  *  1. Instalacja i działanie offline: app shell w cache (strona, ikony, Cytoscape.js), API zawsze z sieci.
- *  2. Android Share Target: przechwytuje POST /share („Udostępnij → FejkRadar”), odkłada link/tekst/obraz
+ *  2. Android Share Target: przechwytuje POST /share-target („Udostępnij → FejkRadar”; także stary adres /share), odkłada link/tekst/obraz
  *     do Cache Storage i otwiera zakładkę „Złap fejk”, która wypełnia formularz i uruchamia analizę.
  *  3. Powiadomienia: kliknięcie przełącza otwarte okno aplikacji na alert (albo otwiera nowe).
  */
-const VERSION = "fejkradar-v7";
+const VERSION = "fejkradar-v8";
 const SHELL_CACHE = `${VERSION}-shell`;
 const SHARE_CACHE = "fejkradar-share";
+// /share-target – aktualny adres z manifestu; /share – dla aplikacji zainstalowanych ze starszym manifestem
+const SHARE_PATHS = ["/share-target", "/share"];
 const SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -39,7 +41,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
 
   // --- Share Target ---
-  if (req.method === "POST" && url.origin === location.origin && url.pathname === "/share") {
+  if (req.method === "POST" && url.origin === location.origin && SHARE_PATHS.includes(url.pathname)) {
     event.respondWith(handleShare(req));
     return;
   }
