@@ -11,7 +11,7 @@ System typu OSINT do wykrywania i łączenia w kampanie fałszywych reklam (inwe
 python -m venv .venv
 .venv\Scripts\activate          # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.app:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Otwórz http://localhost:8000. Przy starcie baza zasiewa się 7 fikcyjnymi reklamami (`data/seed_ads.json`: kampania inwestycyjna, „cud na stawy” i jedna reklama osobna), a scheduler skanuje fikcyjną bibliotekę reklam (`data/seed_feed.json` kopiowany do `data/ad_library_feed.json`).
@@ -83,18 +83,19 @@ Wynik **> 0.6** → zapis krawędzi z listą powodów (`similarity_edges`) i ta 
 
 Na danych demo: wszystkie reklamy w obrębie każdej kampanii są połączone (bezpośrednio lub przez inne reklamy), a najwyższy wynik między różnymi kampaniami to 0.40 (sama wspólna domena pośrednia), więc nie ma fałszywych połączeń.
 
-## API (skrót)
+## API (`app/app.py`)
 
-- `POST /api/submit` (multipart: `url`, `text`, `file`) → raport
-- `POST /share` – Web Share Target z PWA
-- `GET /api/ads`, `GET /api/ads/{id}`
-- `GET /api/clusters`, `GET /api/graph`
-- `GET /api/edges/{ad_id}` – krawędzie podobieństwa z powodami
-- `POST /api/rebuild` – pełne przeliczenie kampanii
-- `POST|DELETE /api/campaigns/{id}/watch`, `GET /api/alerts`
-- `GET|POST /api/persons`, `DELETE /api/persons/{id}`
-- `GET|POST /api/sources`, `POST /api/sources/{id}/run`, `POST /api/sources/{id}/toggle`
-- `POST /api/demo/inject`, `POST /api/demo/reset`
+Pełna, interaktywna dokumentacja: http://localhost:8000/docs
+
+| Obszar | Endpointy |
+|---|---|
+| Analiza | `POST /api/submit` (multipart: `url`, `text`, `file`) → szybki raport · `POST /share` (Web Share Target z PWA) · `GET /api/ads` · `GET /api/ads/{id}` (raport + krawędzie z powodami) |
+| Kampanie i graf | `GET /api/campaigns` · `GET /api/graph[?campaign=ID&min_size=N]` – gotowe `elements` dla Cytoscape.js (węzły: reklamy, domeny, osoby; krawędzie: domena, przekierowanie, wizerunek, podobieństwo z wynikiem i powodami) · `GET /api/edges/{ad_id}` · `POST /api/rebuild` |
+| Osoby | `GET /api/persons` (z liczbą reklam) · `POST /api/persons` · `PUT /api/persons/{id}` · `DELETE /api/persons/{id}` – każda zmiana bazy uruchamia ponowne dopasowanie osób we wszystkich reklamach i przeliczenie kampanii |
+| Scheduler | `GET /api/scheduler` (źródła, czas do następnego skanu, dziennik) · `POST /api/sources` (domyślnie co **30 s**) · `POST /api/sources/{id}/run` · `POST /api/sources/{id}/toggle` |
+| Alerty | `POST`/`DELETE /api/campaigns/{id}/watch` · `GET /api/alerts[?unseen=true]` · `POST /api/alerts/seen` |
+| Demo | `POST /api/demo/inject[?scan=true]` – dopisuje kolejny wariant znanej kampanii do biblioteki (stała kolejność; scheduler wyłapie go w ≤ 30 s, `scan=true` od razu) · `POST /api/demo/reset` |
+| Inne | `GET /api/health` |
 
 Źródło schedulera to feed JSON (plik lub URL) – lista obiektów `{id, url, text, [redirect_chain, title, domain_age_days]}`. W ten sposób podpina się eksport z bibliotek reklam (np. Meta Ad Library API).
 

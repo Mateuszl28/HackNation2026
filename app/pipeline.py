@@ -123,6 +123,36 @@ def rebuild() -> None:
         clustering.rebuild(conn)
 
 
+PAGE_REASONS = ("cloaking:", "nie udało się pobrać strony")
+
+
+def rematch_persons() -> int:
+    """Po zmianie bazy osób: ponowne dopasowanie osób we wszystkich reklamach, ryzyko, cechy i kampanie.
+    Zwraca liczbę reklam, w których zmieniła się lista osób."""
+    changed = 0
+    with connect() as conn:
+        persons = all_persons(conn)
+        for ad in all_ads(conn):
+            hits = match_persons_detailed(" ".join(filter(None, [ad["text"], ad["title"], ad["description"]])), persons)
+            ids = [m["id"] for m in hits]
+            if ids == ad["persons"]:
+                continue
+            changed += 1
+            ad["persons"] = ids
+            risk, reasons = risk_score(ad, None, [f"{m['name']} („{m['matched']}”)" for m in hits])
+            # sygnały ze strony docelowej (cloaking, błąd pobrania) nie są odtwarzalne bez sieci – przenosimy je
+            kept = [r for r in ad["risk_reasons"] if r.startswith(PAGE_REASONS)]
+            risk = min(1.0, risk + 0.3 * any(r.startswith("cloaking:") for r in kept))
+            conn.execute("UPDATE ads SET persons=?, risk=?, risk_reasons=? WHERE id=?",
+                         (json.dumps(ids), round(risk, 2), json.dumps(reasons + kept, ensure_ascii=False), ad["id"]))
+            conn.execute("DELETE FROM ad_features WHERE ad_id=? AND kind='person'", (ad["id"],))
+            conn.executemany("INSERT OR IGNORE INTO ad_features VALUES (?,?,?)",
+                             [(ad["id"], "person", str(p)) for p in ids])
+        if changed:
+            clustering.rebuild(conn)
+    return changed
+
+
 def edges_for(ad_id: int, conn=None) -> list[dict]:
     conn = conn or connect()
     rows = conn.execute("SELECT * FROM similarity_edges WHERE ad_a=? OR ad_b=? ORDER BY score DESC", (ad_id, ad_id))
