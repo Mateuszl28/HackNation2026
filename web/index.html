@@ -159,10 +159,13 @@
         <label>Imię i nazwisko</label><input name="name" required>
         <label>Rola (np. lekarz, polityk, prezenter)</label><input name="role">
         <label>Aliasy (po przecinku)</label><input name="aliases" placeholder="dr Kowalski, Kowalski">
+        <label>Zdjęcie twarzy (opcjonalnie – do rozpoznawania wizerunku na grafikach reklam)</label>
+        <input name="face" type="file" accept="image/*">
         <button class="btn">Dodaj</button>
         <p class="muted small">Dopasowanie: imię/nazwisko/aliasy w tekście i OCR (z odmianą) oraz <b>twarz</b> – dodaj zdjęcie referencyjne w tabeli obok
           (wykrywanie YuNet, wektory SFace – modele OpenCV na licencjach MIT/Apache). Tylko osoby publiczne – wizerunek to dane szczególnej kategorii (RODO art. 9).</p>
         <p class="small" id="capInfo"></p>
+        <p class="small muted" id="capStatus"></p>
       </form>
       <div class="card"><table id="personTable"></table></div>
     </div>
@@ -434,7 +437,7 @@ async function loadPersons() {
      <td><button class="btn ghost" style="margin:0" onclick="delPerson(${p.id})">usuń</button></td></tr>`).join("");
   try {
     const cap = await api("/api/capabilities");
-    $("#capInfo").innerHTML = `OCR: <b>${esc(cap.ocr || "brak")}</b>${cap.tesseract_installed ? "" : " <span class='muted'>(Tesseract nie zainstalowany)</span>"} · rozpoznawanie twarzy: <b>${cap.faces ? "aktywne" : "niedostępne"}</b>`;
+    $("#capStatus").innerHTML = `OCR: <b>${esc(cap.ocr || "brak")}</b>${cap.tesseract_installed ? "" : " <span class='muted'>(Tesseract nie zainstalowany)</span>"} · rozpoznawanie twarzy: <b>${cap.faces ? "aktywne" : "niedostępne"}</b>`;
   } catch {}
 }
 async function addFace(pid, input) {
@@ -452,7 +455,19 @@ $("#personForm").addEventListener("submit", async e => {
   e.preventDefault(); const f = new FormData(e.target);
   try {
     const r = await api("/api/persons", json({name: f.get("name"), role: f.get("role"), aliases: f.get("aliases").split(",").map(s => s.trim()).filter(Boolean)}));
-    $("#capInfo").textContent = `Dodano osobę${r.rematched_ads ? ` – rozpoznana w ${r.rematched_ads} istniejących reklamach` : ""}.`;
+    let msg = `Dodano osobę${r.rematched_ads ? ` – rozpoznana w ${r.rematched_ads} istniejących reklamach` : ""}.`;
+    const face = f.get("face");
+    if (face && face.size) {  // zdjęcie twarzy w tym samym kroku
+      const fd = new FormData(); fd.append("file", face);
+      try {
+        const fr = await api(`/api/persons/${r.id}/faces`, {method: "POST", body: fd});
+        msg += ` Zapisano twarz${fr.faces_on_photo > 1 ? ` (na zdjęciu ${fr.faces_on_photo} twarze – użyto największej)` : ""}; rozpoznana po twarzy w ${fr.rematched_ads} reklamach.`;
+      } catch (fe) {
+        let d = fe.message; try { d = JSON.parse(d).detail; } catch {}
+        msg += ` ⚠️ Zdjęcie nie zostało zapisane: ${d} – dodaj je przyciskiem „📷 dodaj” w tabeli.`;
+      }
+    }
+    $("#capInfo").textContent = msg;
     e.target.reset(); loadPersons();
   } catch (err) {
     let msg = err.message; try { msg = JSON.parse(msg).detail; } catch {}
